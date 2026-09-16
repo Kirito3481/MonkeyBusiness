@@ -11,9 +11,15 @@ from modules.jubeat.shopinfo_ave2 import jubeat_ave2_global_info
 router = APIRouter(prefix="/local", tags=["local"])
 router.model_whitelist = ["L44"]
 
+MDATA_PARTITIONS = 3  # the game calls get_mdata with mdata_ver 1..3
+
 
 def get_profile(cid):
     return get_db().table("jubeat_profile").get(where("card") == cid)
+
+
+def get_profile_by_jid(jid):
+    return get_db().table("jubeat_profile").get(where("jubeat_id") == int(jid))
 
 
 def get_game_profile(cid, game_version):
@@ -21,7 +27,22 @@ def get_game_profile(cid, game_version):
     if profile is None:
         return None
 
-    return profile["version"].get(str(game_version), None)
+    stored = profile["version"].get(str(game_version), None)
+    if stored is None:
+        return None
+
+    return merge_defaults(new_game_profile(game_version, stored.get("name", "")), stored)
+
+
+def merge_defaults(defaults, stored):
+    # Deep-merge so profiles saved by older server code still have every key.
+    merged = dict(defaults)
+    for k, v in stored.items():
+        if isinstance(v, dict) and isinstance(merged.get(k), dict):
+            merged[k] = merge_defaults(merged[k], v)
+        else:
+            merged[k] = v
+    return merged
 
 
 def new_game_profile(game_version, name):
@@ -66,11 +87,64 @@ def new_game_profile(game_version, name):
             "hard": 0,
             "hazard": 0,
         },
+        "item": {
+            "music_list": [-1] * 64,
+            "secret_list": [-1] * 64,
+            "theme_list": [-1] * 16,
+            "marker_list": [-1] * 16,
+            "title_list": [-1] * 160,
+            "parts_list": [-1] * 160,
+            "emblem_list": [-1] * 96,
+            "commu_list": [-1] * 16,
+            "new": {
+                "secret_list": [0] * 64,
+                "theme_list": [0] * 16,
+                "marker_list": [0] * 16,
+            },
+        },
+        "fill_in_category": {
+            "normal": {
+                "no_gray_flag_list": [0] * 16,
+                "all_yellow_flag_list": [0] * 16,
+                "full_combo_flag_list": [0] * 16,
+                "excellent_flag_list": [0] * 16,
+            },
+            "hard": {
+                "no_gray_flag_list": [0] * 16,
+                "all_yellow_flag_list": [0] * 16,
+                "full_combo_flag_list": [0] * 16,
+                "excellent_flag_list": [0] * 16,
+            },
+        },
+        "jbox": {
+            "point": 0,
+            "normal_index": 0,
+            "premium_index": 0,
+        },
+        "born": {
+            "status": 0,
+            "year": 0,
+        },
+        "navi_flag": 0,
     }
+
+
+def _fill_in_node(tag, cat):
+    return E(
+        tag,
+        E.no_gray_flag_list(cat["no_gray_flag_list"], __type="s32"),
+        E.all_yellow_flag_list(cat["all_yellow_flag_list"], __type="s32"),
+        E.full_combo_flag_list(cat["full_combo_flag_list"], __type="s32"),
+        E.excellent_flag_list(cat["excellent_flag_list"], __type="s32"),
+    )
 
 
 def format_profile(jid, profile):
     last = profile["last"]
+    item = profile["item"]
+    fill = profile["fill_in_category"]
+    jbox = profile["jbox"]
+    born = profile["born"]
 
     return E.response(
         E.gametop_ave2(
@@ -124,18 +198,18 @@ def format_profile(jid, profile):
                         ),
                     ),
                     E.item(
-                        E.music_list([0] * 64, __type="s32"),
-                        E.secret_list([0] * 64, __type="s32"),
-                        E.theme_list([-1] * 16, __type="s32"),
-                        E.marker_list([-1] * 16, __type="s32"),
-                        E.title_list([-1] * 160, __type="s32"),
-                        E.parts_list([-1] * 160, __type="s32"),
-                        E.emblem_list([-1] * 96, __type="s32"),
-                        E.commu_list([-1] * 16, __type="s32"),
+                        E.music_list(item["music_list"], __type="s32"),
+                        E.secret_list(item["secret_list"], __type="s32"),
+                        E.theme_list(item["theme_list"], __type="s32"),
+                        E.marker_list(item["marker_list"], __type="s32"),
+                        E.title_list(item["title_list"], __type="s32"),
+                        E.parts_list(item["parts_list"], __type="s32"),
+                        E.emblem_list(item["emblem_list"], __type="s32"),
+                        E.commu_list(item["commu_list"], __type="s32"),
                         E.new(
-                            E.secret_list([0] * 64, __type="s32"),
-                            E.theme_list([0] * 16, __type="s32"),
-                            E.marker_list([0] * 16, __type="s32"),
+                            E.secret_list(item["new"]["secret_list"], __type="s32"),
+                            E.theme_list(item["new"]["theme_list"], __type="s32"),
+                            E.marker_list(item["new"]["marker_list"], __type="s32"),
                         ),
                     ),
                     E.fc_challenge(
@@ -153,36 +227,26 @@ def format_profile(jid, profile):
                     ),
                     E.event_info(),
                     E.jbox(
-                        E.point(0, __type="s32"),
+                        E.point(jbox["point"], __type="s32"),
                         E.emblem(
-                            E.normal(E.index(0, __type="s16")),
-                            E.premium(E.index(0, __type="s16")),
+                            E.normal(E.index(jbox["normal_index"], __type="s16")),
+                            E.premium(E.index(jbox["premium_index"], __type="s16")),
                         ),
                     ),
                     E.new_music(),
                     E.navi(
-                        E.flag(0, __type="u64"),
+                        E.flag(profile["navi_flag"], __type="u64"),
                     ),
                     E.gift_list(),
                     E.born(
-                        E.status(0, __type="s8"),
-                        E.year(0, __type="s16"),
+                        E.status(born["status"], __type="s8"),
+                        E.year(born["year"], __type="s16"),
                     ),
                     E.question_list(),
                     E.server(),
                     E.fill_in_category(
-                        E.normal(
-                            E.no_gray_flag_list([0] * 16, __type="s32"),
-                            E.all_yellow_flag_list([0] * 16, __type="s32"),
-                            E.full_combo_flag_list([0] * 16, __type="s32"),
-                            E.excellent_flag_list([0] * 16, __type="s32"),
-                        ),
-                        E.hard(
-                            E.no_gray_flag_list([0] * 16, __type="s32"),
-                            E.all_yellow_flag_list([0] * 16, __type="s32"),
-                            E.full_combo_flag_list([0] * 16, __type="s32"),
-                            E.excellent_flag_list([0] * 16, __type="s32"),
-                        ),
+                        _fill_in_node("normal", fill["normal"]),
+                        _fill_in_node("hard", fill["hard"]),
                     ),
                     E.lightchat(
                         E.current_map_id(0, __type="s32"),
@@ -210,6 +274,67 @@ def format_profile(jid, profile):
                             ),
                         ),
                     ),
+                ),
+            ),
+        )
+    )
+
+
+def _mode_node(tag, charts):
+    # charts: {seq: score_row} for one of normal/hard. Arrays are indexed by seq 0..2.
+    def arr(key):
+        return [charts[s][key] if s in charts else 0 for s in range(3)]
+
+    bars = [
+        E.bar(charts[s]["bar"], __type="u8", seq=str(s))
+        for s in range(3)
+        if s in charts and charts[s].get("bar")
+    ]
+
+    return E(
+        tag,
+        E.score(arr("score"), __type="s32"),
+        E.music_rate(arr("music_rate"), __type="s32"),
+        E.clear(arr("clear"), __type="s8"),
+        E.play_cnt(arr("play_cnt"), __type="s32"),
+        E.clear_cnt(arr("clear_cnt"), __type="s32"),
+        E.fc_cnt(arr("fc_cnt"), __type="s32"),
+        E.ex_cnt(arr("ex_cnt"), __type="s32"),
+        *bars,
+    )
+
+
+def format_scores(jid, game_version, partition):
+    rows = get_db().table("jubeat_scores_best").search(
+        (where("jubeat_id") == int(jid)) & (where("game_version") == game_version)
+    )
+
+    by_music = {}
+    for row in rows:
+        by_music.setdefault(row["music_id"], {"normal": {}, "hard": {}})
+        by_music[row["music_id"]]["hard" if row["hard"] else "normal"][row["seq"]] = row
+
+    # Split the song list across the 3 get_mdata calls the game makes.
+    music_ids = sorted(by_music)
+    part = max(1, min(partition, MDATA_PARTITIONS)) - 1
+    chunk = music_ids[part::MDATA_PARTITIONS]
+
+    musicdata = []
+    for mid in chunk:
+        modes = by_music[mid]
+        children = []
+        if modes["normal"]:
+            children.append(_mode_node("normal", modes["normal"]))
+        if modes["hard"]:
+            children.append(_mode_node("hard", modes["hard"]))
+        musicdata.append(E.musicdata(*children, music_id=str(mid)))
+
+    return E.response(
+        E.gametop_ave2(
+            E.data(
+                E.player(
+                    E.jid(int(jid), __type="s32"),
+                    E.mdata_list(*musicdata),
                 ),
             ),
         )
@@ -286,20 +411,14 @@ async def gametop_ave2_get_pdata(request: Request):
 @router.post("/{gameinfo}/gametop_ave2/get_mdata")
 async def gametop_ave2_get_mdata(request: Request):
     request_info = await core_process_request(request)
+    game_version = request_info["game_version"]
 
-    jid = int(request_info["root"][0].find("data/player/jid").text)
+    player = request_info["root"][0].find("data/player")
+    jid = int(player.find("jid").text)
+    mdata_ver_node = player.find("mdata_ver")
+    mdata_ver = int(mdata_ver_node.text) if mdata_ver_node is not None and mdata_ver_node.text else 1
 
-    # TODO: fill mdata_list from saved scores once gameend_ave2 is implemented
-    response = E.response(
-        E.gametop_ave2(
-            E.data(
-                E.player(
-                    E.jid(jid, __type="s32"),
-                    E.mdata_list(),
-                ),
-            ),
-        )
-    )
+    response = format_scores(jid, game_version, mdata_ver)
 
     response_body, response_headers = await core_prepare_response(request, response)
     return Response(content=response_body, headers=response_headers)

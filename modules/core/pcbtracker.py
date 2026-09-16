@@ -17,7 +17,7 @@ async def pcbtracker_alive(request: Request):
         E.pcbtracker(
             status=0,
             expire=1200,
-            ecenable=not config.maintenance_mode,
+            ecenable=0,
             eclimit=0,
             limit=0,
             time=int(time()),

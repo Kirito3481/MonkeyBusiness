@@ -29,7 +29,7 @@ def new_game_profile(game_version, name):
         "game_version": game_version,
         "name": name,
         "event_flag": 0,
-        "tune_cnt": 3,
+        "tune_cnt": 0,
         "save_cnt": 0,
         "saved_cnt": 0,
         "fc_cnt": 0,

@@ -126,7 +126,84 @@ def new_game_profile(game_version, name):
             "year": 0,
         },
         "navi_flag": 0,
+        # lightchat progress, keyed by map/event/section/mission/condition id (strings).
+        # Map 21 / event 1 / section 1 are the ones defined in shopinfo's global info.
+        "lightchat": {
+            "current_map_id": 0,
+            "current_event_id": 0,
+            "maps": {
+                "21": {
+                    "tune_count": 0,
+                    "last_daily_bonus_time": 0,
+                    "events": {
+                        "1": {
+                            "display_state": 1,
+                            "conditions": {},
+                            "sections": {
+                                "1": {"acquired_jwatt": 0, "is_cleared": 0, "missions": {}},
+                            },
+                        },
+                    },
+                },
+            },
+        },
     }
+
+
+def _lightchat_node(lc):
+    # Load format (jubeat.dll receiver sub_1007B840 -> map sub_1007D4B0 -> event sub_100796D0
+    # -> section sub_10082300 / condition sub_100785E0):
+    #   lightchat { current_map_id s32, current_event_id s32, map_list/map@id { tune_count s32,
+    #   last_daily_bonus_time u64, event_list/event@id { display_state s32,
+    #   condition_list/condition@id { is_cleared bool, progress s32 },
+    #   section_list/section@id { acquired_jwatt s32, is_cleared bool,
+    #   mission_list/mission@id { is_cleared bool, progress s32 } } } } }
+    def progress_nodes(tag, entries):
+        return [
+            E(
+                tag,
+                E.is_cleared(bool(v.get("is_cleared", 0)), __type="bool"),
+                E.progress(v.get("progress", 0), __type="s32"),
+                id=str(k),
+            )
+            for k, v in sorted(entries.items(), key=lambda kv: int(kv[0]))
+        ]
+
+    maps = []
+    for map_id, m in sorted(lc["maps"].items(), key=lambda kv: int(kv[0])):
+        events = []
+        for event_id, ev in sorted(m.get("events", {}).items(), key=lambda kv: int(kv[0])):
+            sections = [
+                E.section(
+                    E.acquired_jwatt(sec.get("acquired_jwatt", 0), __type="s32"),
+                    E.is_cleared(bool(sec.get("is_cleared", 0)), __type="bool"),
+                    E.mission_list(*progress_nodes("mission", sec.get("missions", {}))),
+                    id=str(section_id),
+                )
+                for section_id, sec in sorted(ev.get("sections", {}).items(), key=lambda kv: int(kv[0]))
+            ]
+            events.append(
+                E.event(
+                    E.display_state(ev.get("display_state", 1), __type="s32"),
+                    E.condition_list(*progress_nodes("condition", ev.get("conditions", {}))),
+                    E.section_list(*sections),
+                    id=str(event_id),
+                )
+            )
+        maps.append(
+            E.map(
+                E.tune_count(m.get("tune_count", 0), __type="s32"),
+                E.last_daily_bonus_time(m.get("last_daily_bonus_time", 0), __type="u64"),
+                E.event_list(*events),
+                id=str(map_id),
+            )
+        )
+
+    return E.lightchat(
+        E.current_map_id(lc["current_map_id"], __type="s32"),
+        E.current_event_id(lc["current_event_id"], __type="s32"),
+        E.map_list(*maps),
+    )
 
 
 def _fill_in_node(tag, cat):
@@ -248,32 +325,7 @@ def format_profile(jid, profile):
                         _fill_in_node("normal", fill["normal"]),
                         _fill_in_node("hard", fill["hard"]),
                     ),
-                    E.lightchat(
-                        E.current_map_id(0, __type="s32"),
-                        E.current_event_id(0, __type="s32"),
-                        E.map_list(
-                            E.map(
-                                E.tune_count(0, __type="s32"),
-                                E.last_daily_bonus_time(0, __type="u64"),
-                                E.event_list(
-                                    E.event(
-                                        E.display_state(1, __type="s32"),
-                                        E.condition_list(),
-                                        E.section_list(
-                                            E.section(
-                                                E.acquired_jwatt(0, __type="s32"),
-                                                E.is_cleared(False, __type="bool"),
-                                                E.mission_list(),
-                                                id="1",
-                                            ),
-                                        ),
-                                        id="1",
-                                    ),
-                                ),
-                                id="21",
-                            ),
-                        ),
-                    ),
+                    _lightchat_node(profile["lightchat"]),
                 ),
             ),
         )

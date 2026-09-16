@@ -156,6 +156,67 @@ def update_profile_from_regist(profile, info, player):
     if player.find("navi/flag") is not None:
         profile["navi_flag"] = _int(player, "navi/flag", profile["navi_flag"])
 
+    update_lightchat(profile, player.find("lightchat"))
+
+    return profile
+
+
+def update_lightchat(profile, node):
+    # Save format (jubeat.dll sender sub_1007BAD0 / event sub_10079A80 / section sub_100825F0):
+    #   lightchat { map_list/map@id { tune_count, last_daily_bonus_time, event_list/event@id {
+    #   section_list/section@id { acquired_jwatt, is_cleared, mission_list/mission@id { is_cleared, progress } },
+    #   condition_list/condition_data@id/condition@id { is_cleared, progress }, display_state } },
+    #   next_map_id, next_event_id, next_section_id }
+    if node is None:
+        return profile
+
+    lc = profile["lightchat"]
+    for m in node.findall("map_list/map"):
+        map_id = m.get("id")
+        if map_id is None:
+            continue
+        stored_map = lc["maps"].setdefault(map_id, {"tune_count": 0, "last_daily_bonus_time": 0, "events": {}})
+        stored_map["tune_count"] = _int(m, "tune_count", stored_map["tune_count"])
+        stored_map["last_daily_bonus_time"] = _int(m, "last_daily_bonus_time", stored_map["last_daily_bonus_time"])
+
+        for ev in m.findall("event_list/event"):
+            event_id = ev.get("id")
+            if event_id is None:
+                continue
+            stored_ev = stored_map["events"].setdefault(
+                event_id, {"display_state": 1, "conditions": {}, "sections": {}}
+            )
+            if ev.find("display_state") is not None:
+                stored_ev["display_state"] = _int(ev, "display_state", stored_ev["display_state"])
+
+            for cond in ev.findall("condition_list/condition_data/condition") + ev.findall("condition_list/condition"):
+                if cond.get("id") is not None:
+                    stored_ev["conditions"][cond.get("id")] = {
+                        "is_cleared": _int(cond, "is_cleared"),
+                        "progress": _int(cond, "progress"),
+                    }
+
+            for sec in ev.findall("section_list/section"):
+                section_id = sec.get("id")
+                if section_id is None:
+                    continue
+                stored_sec = stored_ev["sections"].setdefault(
+                    section_id, {"acquired_jwatt": 0, "is_cleared": 0, "missions": {}}
+                )
+                stored_sec["acquired_jwatt"] = _int(sec, "acquired_jwatt", stored_sec["acquired_jwatt"])
+                stored_sec["is_cleared"] = _int(sec, "is_cleared", stored_sec["is_cleared"])
+                for mis in sec.findall("mission_list/mission"):
+                    if mis.get("id") is not None:
+                        stored_sec["missions"][mis.get("id")] = {
+                            "is_cleared": _int(mis, "is_cleared"),
+                            "progress": _int(mis, "progress"),
+                        }
+
+    if node.find("next_map_id") is not None:
+        lc["current_map_id"] = _int(node, "next_map_id", lc["current_map_id"])
+    if node.find("next_event_id") is not None:
+        lc["current_event_id"] = _int(node, "next_event_id", lc["current_event_id"])
+
     return profile
 
 

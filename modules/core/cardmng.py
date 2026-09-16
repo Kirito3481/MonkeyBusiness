@@ -167,7 +167,12 @@ async def cardmng_inquire(request: Request):
             # first-play flow finds the card without a second registration.
             if get_db().table(get_target_table(model)).get(where("card") == cid) is None:
                 create_profile(model, request_info["game_version"], cid, pin)
-            played = has_played(model, cid)
+            if model == "LDJ":
+                # IIDX migrates old profiles itself (pc.oldget -> getname -> takeover),
+                # so binded must reflect this version only.
+                played = bool(get_profile(model, cid)["version"].get(str(request_info["game_version"])))
+            else:
+                played = has_played(model, cid)
         else:
             played = False
         binded = 1 if played else 0

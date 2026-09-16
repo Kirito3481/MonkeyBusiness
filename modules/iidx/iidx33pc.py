@@ -1155,26 +1155,9 @@ async def iidx33pc_visit(request: Request):
     return Response(content=response_body, headers=response_headers)
 
 
-@router.post("/{gameinfo}/IIDX33pc/reg")
-async def iidx33pc_reg(request: Request):
-    request_info = await core_process_request(request)
-    game_version = request_info["game_version"]
-
-    cid = request_info["root"][0].attrib["cid"]
-    name = request_info["root"][0].attrib["name"]
-    pid = request_info["root"][0].attrib["pid"]
-
-    db = get_db().table("iidx_profile")
-    all_profiles_for_card = db.get(Query().card == cid)
-
-    if all_profiles_for_card is None:
-        all_profiles_for_card = {"card": cid, "version": {}}
-
-    if "iidx_id" not in all_profiles_for_card:
-        iidx_id = random.randint(10000000, 99999999)
-        all_profiles_for_card["iidx_id"] = iidx_id
-
-    all_profiles_for_card["version"][str(game_version)] = {
+def new_profile_data(game_version, name, pid):
+    """Default IIDX33 profile (pc.reg / pc.takeover)."""
+    return {
         "game_version": game_version,
         "djname": name,
         "region": int(pid),
@@ -1396,11 +1379,133 @@ async def iidx33pc_reg(request: Request):
         "dp_rival_5_iidx_id": 0,
         "dp_rival_6_iidx_id": 0,
     }
+
+
+def find_old_profile(all_profiles_for_card, game_version):
+    """Newest non-empty profile of an older version, for pc.oldget / getname / takeover."""
+    if all_profiles_for_card is None:
+        return None, None
+    for ver in sorted((int(v) for v in all_profiles_for_card.get("version", {})), reverse=True):
+        if ver < game_version and all_profiles_for_card["version"].get(str(ver)):
+            return ver, all_profiles_for_card["version"][str(ver)]
+    return None, None
+
+
+def create_profile(cid, game_version, name, pid, takeover_from=None):
+    db = get_db().table("iidx_profile")
+    all_profiles_for_card = db.get(Query().card == cid)
+    if all_profiles_for_card is None:
+        all_profiles_for_card = {"card": cid, "version": {}}
+    if "iidx_id" not in all_profiles_for_card:
+        all_profiles_for_card["iidx_id"] = random.randint(10000000, 99999999)
+
+    profile = new_profile_data(game_version, name, pid)
+    if takeover_from is not None:
+        old_version, old_profile = takeover_from
+        # Carry over every setting/qpro/dan/achievement key the new version also has.
+        for k, v in old_profile.items():
+            if k in profile and k not in ("game_version", "djname", "region"):
+                profile[k] = v
+        # Dan (class) results are stored per game_version: copy them so the grade
+        # shown by pc.get matches the previous version.
+        class_db = get_db().table("iidx_class_best")
+        iidx_id = all_profiles_for_card["iidx_id"]
+        for row in class_db.search((where("iidx_id") == iidx_id) & (where("game_version") == old_version)):
+            new_row = dict(row)
+            new_row["game_version"] = game_version
+            class_db.upsert(
+                new_row,
+                (where("iidx_id") == iidx_id)
+                & (where("game_version") == game_version)
+                & (where("gid") == row["gid"])
+                & (where("gtype") == row["gtype"]),
+            )
+
+    all_profiles_for_card["version"][str(game_version)] = profile
     db.upsert(all_profiles_for_card, where("card") == cid)
+    return all_profiles_for_card
+
+
+@router.post("/{gameinfo}/IIDX33pc/reg")
+async def iidx33pc_reg(request: Request):
+    request_info = await core_process_request(request)
+    game_version = request_info["game_version"]
+
+    cid = request_info["root"][0].attrib["cid"]
+    name = request_info["root"][0].attrib["name"]
+    pid = request_info["root"][0].attrib["pid"]
+
+    create_profile(cid, game_version, name, pid)
 
     card, card_split = get_id_from_profile(cid)
 
     response = E.response(E.IIDX33pc(id=card, id_str=card_split))
+
+    response_body, response_headers = await core_prepare_response(request, response)
+    return Response(content=response_body, headers=response_headers)
+
+
+def _card_from_request(root):
+    return root.attrib.get("rid") or root.attrib.get("cid")
+
+
+@router.post("/{gameinfo}/IIDX33pc/oldget")
+async def iidx33pc_oldget(request: Request):
+    # Card has no profile for this version: status 0 = an older version profile exists
+    # (game then calls getname + takeover), status 1 = none (game goes to pc.reg).
+    request_info = await core_process_request(request)
+    game_version = request_info["game_version"]
+
+    cid = _card_from_request(request_info["root"][0])
+    old_version, old_profile = find_old_profile(get_profile(cid), game_version)
+
+    response = E.response(E.IIDX33pc(status=0 if old_profile is not None else 1))
+
+    response_body, response_headers = await core_prepare_response(request, response)
+    return Response(content=response_body, headers=response_headers)
+
+
+@router.post("/{gameinfo}/IIDX33pc/getname")
+async def iidx33pc_getname(request: Request):
+    request_info = await core_process_request(request)
+    game_version = request_info["game_version"]
+
+    cid = _card_from_request(request_info["root"][0])
+    all_profiles_for_card = get_profile(cid)
+    old_version, old_profile = find_old_profile(all_profiles_for_card, game_version)
+
+    if old_profile is None:
+        response = E.response(E.IIDX33pc(status=1))
+    else:
+        djid, djid_split = get_id_from_profile(cid)
+        response = E.response(
+            E.IIDX33pc(
+                name=old_profile.get("djname", ""),
+                idstr=djid_split,
+                pid=old_profile.get("region", 0),
+            )
+        )
+
+    response_body, response_headers = await core_prepare_response(request, response)
+    return Response(content=response_body, headers=response_headers)
+
+
+@router.post("/{gameinfo}/IIDX33pc/takeover")
+async def iidx33pc_takeover(request: Request):
+    request_info = await core_process_request(request)
+    game_version = request_info["game_version"]
+    root = request_info["root"][0]
+
+    cid = root.attrib.get("cid") or root.attrib.get("rid")
+    all_profiles_for_card = get_profile(cid)
+    old_version, old_profile = find_old_profile(all_profiles_for_card, game_version)
+
+    name = root.attrib.get("name") or (old_profile or {}).get("djname", "")
+    pid = root.attrib.get("pid") or (old_profile or {}).get("region", 0)
+    create_profile(cid, game_version, name, pid, takeover_from=(old_version, old_profile) if old_profile else None)
+
+    djid, djid_split = get_id_from_profile(cid)
+    response = E.response(E.IIDX33pc(id=djid))
 
     response_body, response_headers = await core_prepare_response(request, response)
     return Response(content=response_body, headers=response_headers)

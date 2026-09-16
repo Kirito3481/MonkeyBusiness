@@ -6,23 +6,58 @@ from core_database import get_db
 
 router = APIRouter(prefix="/core", tags=["cardmng"])
 
+# Card registration (PIN) is global, like real e-amusement: one "card" table
+# shared by every game. Per-game profile tables only say whether the card has
+# played that game. inquire status 112 (not registered) is returned only for a
+# card no game has ever registered; a card known from another game gets status
+# 0 with binded=0 so the game runs its own first-play flow instead of asking
+# the player to register the card again.
+
+PROFILE_TABLES = {
+    "LDJ": "iidx_profile",
+    "MDX": "ddr_profile",
+    "KFC": "sdvx_profile",
+    "M32": "gitadora_profile",
+    "PAN": "nostalgia_profile",
+    "REC": "dancerush_profile",
+    "JDZ": "iidx_profile",
+    "KDZ": "iidx_profile",
+    "L44": "jubeat_profile",
+    "PIX": "museca_profile",
+    "MBR": "reflec_profile",
+}
+
+STATUS_OK = 0
+STATUS_NOT_REGISTERED = 112
+STATUS_INVALID_PIN = 116
+
 
 def get_target_table(game_id):
-    target_table = {
-        "LDJ": "iidx_profile",
-        "MDX": "ddr_profile",
-        "KFC": "sdvx_profile",
-        "M32": "gitadora_profile",
-        "PAN": "nostalgia_profile",
-        "REC": "dancerush_profile",
-        "JDZ": "iidx_profile",
-        "KDZ": "iidx_profile",
-        "L44": "jubeat_profile",
-        "PIX": "museca_profile",
-        "MBR": "reflec_profile",
-    }
+    return PROFILE_TABLES[game_id]
 
-    return target_table[game_id]
+
+def cards_table():
+    return get_db().table("card")
+
+
+def get_pin(cid):
+    # Global registration first; fall back to a PIN stored by older server code in
+    # any per-game table and migrate it into the global table.
+    card = cards_table().get(where("card") == cid)
+    if card is not None and "pin" in card:
+        return card["pin"]
+
+    for table in set(PROFILE_TABLES.values()):
+        profile = get_db().table(table).get(where("card") == cid)
+        if profile is not None and profile.get("pin") is not None:
+            register_card(cid, profile["pin"])
+            return profile["pin"]
+
+    return None
+
+
+def register_card(cid, pin):
+    cards_table().upsert({"card": cid, "pin": pin}, where("card") == cid)
 
 
 def get_profile(game_id, cid):
@@ -48,12 +83,19 @@ def get_game_profile(game_id, game_version, cid):
 
 
 def create_profile(game_id, game_version, cid, pin):
+    # Make sure the per-game record exists so game modules find the card. The PIN
+    # is also kept here so older module code that reads profile["pin"] keeps working.
     target_table = get_target_table(game_id)
     profile = get_profile(game_id, cid)
 
     profile["pin"] = pin
 
     get_db().table(target_table).upsert(profile, where("card") == cid)
+
+
+def has_played(game_id, cid):
+    profile = get_profile(game_id, cid)
+    return any(bool(v) for v in profile["version"].values())
 
 
 @router.post("/{gameinfo}/cardmng/authpass")
@@ -63,11 +105,8 @@ async def cardmng_authpass(request: Request):
     cid = request_info["root"][0].attrib["refid"]
     passwd = request_info["root"][0].attrib["pass"]
 
-    profile = get_profile(request_info["model"], cid)
-    if profile is None or passwd != profile.get("pin", None):
-        status = 116
-    else:
-        status = 0
+    pin = get_pin(cid)
+    status = STATUS_OK if pin is not None and passwd == pin else STATUS_INVALID_PIN
 
     response = E.response(E.authpass(status=status))
 
@@ -92,7 +131,9 @@ async def cardmng_getrefid(request: Request):
     cid = request_info["root"][0].attrib["cardid"]
     passwd = request_info["root"][0].attrib["passwd"]
 
-    create_profile(request_info["model"], request_info["game_version"], cid, passwd)
+    register_card(cid, passwd)
+    if request_info["model"] in PROFILE_TABLES:
+        create_profile(request_info["model"], request_info["game_version"], cid, passwd)
 
     response = E.response(
         E.getrefid(
@@ -110,16 +151,26 @@ async def cardmng_inquire(request: Request):
     request_info = await core_process_request(request)
 
     cid = request_info["root"][0].attrib["cardid"]
+    model = request_info["model"]
 
-    profile = get_game_profile(request_info["model"], request_info["game_version"], cid)
-    if profile:
-        binded = 1
-        newflag = 0
-        status = 0
-    else:
+    pin = get_pin(cid)
+    if pin is None:
+        # Never registered anywhere: game asks the player to register the card.
         binded = 0
         newflag = 1
-        status = 112
+        status = STATUS_NOT_REGISTERED
+    else:
+        status = STATUS_OK
+        if model in PROFILE_TABLES:
+            # Registered by another game: give this game its own record now so its
+            # first-play flow finds the card without a second registration.
+            if get_db().table(get_target_table(model)).get(where("card") == cid) is None:
+                create_profile(model, request_info["game_version"], cid, pin)
+            played = has_played(model, cid)
+        else:
+            played = False
+        binded = 1 if played else 0
+        newflag = 0 if played else 1
 
     response = E.response(
         E.inquire(

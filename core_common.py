@@ -135,6 +135,10 @@ async def core_get_game_version_from_software_version(software_version):
     # elif model == "PAN":
     #     return 0
 
+    elif model == "L44":
+        if ext >= 2023092001:
+            return 12
+
     else:
         return 0
 

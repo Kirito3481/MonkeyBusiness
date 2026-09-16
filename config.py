@@ -15,10 +15,10 @@ def get_ip():
 
 
 ip = get_ip()
-port = 8000
-response_compression = False
+port = 5730
+response_compression = True
 verbose_log = True
 
-arcade = "Ｍ０ＮＫＹＢＵＳ１Ｎ３Ｚ"
+arcade = "Manhwa"
 paseli = 10000
 maintenance_mode = False

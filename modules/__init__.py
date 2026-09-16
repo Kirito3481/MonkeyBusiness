@@ -62,6 +62,9 @@ async def forward_slashless(
                     gd_module = module.split("_")
                     find_response = globals()[f"gitadora_{gd_module[-1]}_{method}"]
                     return await find_response(gd_module[0], request)
+
+            elif game_code == "L44":
+                find_response = globals()[f"{module}_{method}"]
             return await find_response(request)
         except (KeyError, UnboundLocalError):
             print("Try URL Slash 1 (On) if this game is supported.")

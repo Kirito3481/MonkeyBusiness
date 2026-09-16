@@ -7,7 +7,8 @@ from fastapi import APIRouter, Request, Response
 
 from core_common import core_process_request, core_prepare_response, E
 from modules.popn.common import (
-    ACCOUNT_INTS, ACCOUNT_LISTS, CONFIG_INTS, CUSTOMIZE_INTS, OPTION_BOOLS, OPTION_INTS,
+    ACCOUNT_INTS, ACCOUNT_LISTS, CONFIG_INTS, CUSTOMIZE_INTS, EVENT2021_INTS, EVENT2021_LISTS,
+    EVENT_P27_INTS, EVENT_P28_INTS, OPTION_BOOLS, OPTION_INTS, SP_RIDDLES_INTS,
     MEDAL_NO_PLAY, _int, _int_list, _pad, _text, common_info_nodes, ensure_card, get_card,
     get_game_profile, new_game_profile, profiles_table, save_game_profile, score_to_rank, scores_table,
     update_play_statistics,
@@ -16,7 +17,8 @@ from modules.popn.common import (
 router = APIRouter(prefix="/local2", tags=["local2"])
 router.model_whitelist = ["M39"]
 
-# pop'n music player24 (bemaniutils popn/common.py, pop'n 24 Usaneko protocol).
+# pop'n music player24 for Jam&Fizz (popn22.dll, M39-2025092400); node names and
+# types follow the DLL psmap tables, base logic from bemaniutils popn/common.py.
 # Handler names must stay player24_<method> for the url_slash 0 forwarder.
 # Medals (clear_type) and charts (sheet_num) are stored as the game sends them.
 
@@ -81,7 +83,6 @@ def update_score(popn_id, game_version, music_num, sheet_num, score, medal, comb
 # ---------------------------------------------------------------- profile
 def format_profile(popn_id, profile, game_version):
     cfg = profile["config"]
-    opt = profile["option"]
     cus = profile["customize"]
     rows = user_scores(popn_id, game_version)
 
@@ -133,7 +134,7 @@ def format_profile(popn_id, profile, game_version):
                 E.area_id(profile["area_id"], __type="s16"),
                 E.use_navi(profile["use_navi"], __type="s16"),
                 E.read_news(profile["read_news"], __type="s16"),
-                E.nice(_pad(profile["nice"], 30), __type="s16"),
+                E.nice(_pad(profile["nice"], 100), __type="s16"),
                 E.favorite_chara(_pad(profile["favorite_chara"], 20), __type="s16"),
                 E.special_area(_pad(profile["special_area"], 8), __type="s16"),
                 E.chocolate_charalist(_pad(profile["chocolate_charalist"], 5), __type="s16"),
@@ -163,6 +164,9 @@ def format_profile(popn_id, profile, game_version):
                 E.total_days(profile["total_days"], __type="s16"),
                 E.interval_day(0, __type="s16"),
                 E.active_fr_num(0, __type="u8"),
+                E.sp_riddles_id(profile["sp_riddles_id"], __type="s16"),
+                E.option_tuto(bool(profile["option_tuto"]), __type="bool"),
+                E.sc_news_no(profile["sc_news_no"], __type="s32"),
             ),
             E.eaappli(E.relation(-1, __type="s8")),
             E.info(E.ep(profile["ep"], __type="u16")),
@@ -183,23 +187,7 @@ def format_profile(popn_id, profile, game_version):
                 E.ms_rnd_type(cfg["ms_rnd_type"], __type="s8"),
                 E.banner_sort(cfg["banner_sort"], __type="s8"),
             ),
-            E.option(
-                E.hispeed(opt["hispeed"], __type="s16"),
-                E.popkun(opt["popkun"], __type="u8"),
-                E.hidden(bool(opt["hidden"]), __type="bool"),
-                E.hidden_rate(opt["hidden_rate"], __type="s16"),
-                E.sudden(bool(opt["sudden"]), __type="bool"),
-                E.sudden_rate(opt["sudden_rate"], __type="s16"),
-                E.randmir(opt["randmir"], __type="s8"),
-                E.gauge_type(opt["gauge_type"], __type="s8"),
-                E.ojama_0(opt["ojama_0"], __type="u8"),
-                E.ojama_1(opt["ojama_1"], __type="u8"),
-                E.forever_0(bool(opt["forever_0"]), __type="bool"),
-                E.forever_1(bool(opt["forever_1"]), __type="bool"),
-                E.full_setting(bool(opt["full_setting"]), __type="bool"),
-                E.judge(opt["judge"], __type="u8"),
-                E.guide_se(opt["guide_se"], __type="s8"),
-            ),
+            option_node(profile),
             E.custom_cate(
                 E.valid(0, __type="s8"),
                 E.lv_min(-1, __type="s8"),
@@ -257,8 +245,185 @@ def format_profile(popn_id, profile, game_version):
                 E.stamp_id(profile["stamp_id"], __type="s16"),
                 E.cnt(profile["stamp_cnt"], __type="s16"),
             ),
+            *[
+                E.fes(
+                    E.fes_id(int(fid), __type="u32"),
+                    E.chapter_index(f.get("index", 0), __type="u8"),
+                    E.gauge_point(f.get("points", 0), __type="u16"),
+                    E.is_cleared(bool(f.get("cleared", 0)), __type="bool"),
+                )
+                for fid, f in profile["fes"].items()
+            ],
+            *jamfizz_event_nodes(profile),
         )
     )
+
+
+def option_node(profile):
+    opt = profile["option"]
+    return E.option(
+        E.hispeed(opt["hispeed"], __type="s16"),
+        E.popkun(opt["popkun"], __type="u8"),
+        E.hidden(bool(opt["hidden"]), __type="bool"),
+        E.hidden_rate(opt["hidden_rate"], __type="s16"),
+        E.sudden(bool(opt["sudden"]), __type="bool"),
+        E.sudden_rate(opt["sudden_rate"], __type="s16"),
+        E.randmir(opt["randmir"], __type="s8"),
+        E.gauge_type(opt["gauge_type"], __type="s8"),
+        E.ojama_0(opt["ojama_0"], __type="u8"),
+        E.ojama_1(opt["ojama_1"], __type="u8"),
+        E.forever_0(bool(opt["forever_0"]), __type="bool"),
+        E.forever_1(bool(opt["forever_1"]), __type="bool"),
+        E.full_setting(bool(opt["full_setting"]), __type="bool"),
+        E.judge(opt["judge"], __type="u8"),
+        E.guide_se(opt["guide_se"], __type="s8"),
+        E.guide_se_vol(opt["guide_se_vol"], __type="u8"),
+        E.lift(bool(opt["lift"]), __type="bool"),
+        E.lift_rate(opt["lift_rate"], __type="s16"),
+    )
+
+
+def jamfizz_event_nodes(profile):
+    """event2021 / riddles_data / event_p27 / event_p28 (Jam&Fizz player24.read)."""
+    ev = profile["event2021"]
+    rd = profile["riddles"]
+    p27 = profile["event_p27"]
+    p28 = profile["event_p28"]
+    lamp = p28.get("neon_lamp") or {"id": 49, "point": 0, "is_cleared": 1}
+    nodes = [
+        E.event2021(
+            E.point(ev["point"], __type="u32"),
+            E.step(ev["step"], __type="u8"),
+            E.quest_point(_pad(ev["quest_point"], 8, 0), __type="u32"),
+            E.step_nos(ev["step_nos"], __type="u8"),
+            E.quest_point_nos(_pad(ev["quest_point_nos"], 13, 0), __type="u32"),
+        ),
+        E.event_p27(
+            E.team_id(p27["team_id"], __type="s16"),
+            E.first_play(bool(p27["first_play"]), __type="bool"),
+            E.select_battery_id(p27["select_battery_id"], __type="s16"),
+            E.elem_first_play(bool(p27["elem_first_play"]), __type="bool"),
+            E.today_first_play(bool(p27["today_first_play"]), __type="bool"),
+            *[
+                E.team(
+                    E.team_id(int(tid), __type="s16"),
+                    E.ex_no(t.get("ex_no", 0), __type="s16"),
+                    E.point(t.get("point", 0), __type="u32"),
+                    E.is_cleared(bool(t.get("is_cleared", 0)), __type="bool"),
+                )
+                for tid, t in p27["teams"].items()
+            ],
+            *[
+                E.battery(
+                    E.battery_id(int(bid), __type="s16"),
+                    E.energy(b.get("energy", 0), __type="u32"),
+                    E.is_cleared(bool(b.get("is_cleared", 0)), __type="bool"),
+                )
+                for bid, b in p27["batteries"].items()
+            ],
+        ),
+        E.event_p28(
+            E.burger_first_play(bool(p28["burger_first_play"]), __type="bool"),
+            E.burger_daily_bonus(bool(p28["burger_daily_bonus"]), __type="bool"),
+            E.current_order(_pad(p28["current_order"], 3), __type="s16"),
+            E.neko_daily_bonus(bool(p28["neko_daily_bonus"]), __type="bool"),
+            *[
+                E.order(
+                    E("id", int(oid), __type="s16"),
+                    E.point(o.get("point", 0), __type="u32"),
+                    E.patties(_pad(o.get("patties"), 40), __type="s16"),
+                    E.is_cleared(bool(o.get("is_cleared", 0)), __type="bool"),
+                )
+                for oid, o in p28["orders"].items()
+            ],
+            E.neon_lamp(
+                E("id", lamp["id"], __type="s16"),
+                E.point(lamp["point"], __type="u32"),
+                E.is_cleared(bool(lamp["is_cleared"]), __type="bool"),
+            ),
+            *[
+                E.neko_stamp(
+                    E("id", int(sid), __type="s16"),
+                    E.point(s.get("point", 0), __type="u32"),
+                    E.is_cleared(bool(s.get("is_cleared", 0)), __type="bool"),
+                )
+                for sid, s in p28["neko_stamps"].items()
+            ],
+        ),
+    ]
+    if rd["sp"] or rd["sh"]:
+        nodes.append(
+            E.riddles_data(
+                *[
+                    E.sp_riddles(
+                        E.kaimei_gauge(r.get("kaimei_gauge", 0), __type="u16"),
+                        E.is_cleared(bool(r.get("is_cleared", 0)), __type="bool"),
+                        E.riddles_cleared(bool(r.get("riddles_cleared", 0)), __type="bool"),
+                        E.select_count(r.get("select_count", 0), __type="u8"),
+                        E.other_count(r.get("other_count", 0), __type="u32"),
+                    )
+                    for r in rd["sp"]
+                ],
+                *[E.sh_riddles(E.sh_riddles_id(int(i), __type="u32")) for i in rd["sh"]],
+            )
+        )
+    return nodes
+
+
+def _sub_node(profile, node, key, ints, lists=None):
+    if node is None:
+        return None
+    target = profile[key]
+    for k in ints:
+        if node.find(k) is not None:
+            target[k] = _int(node, k, target.get(k, 0))
+    for k, size in (lists or {}).items():
+        values = _int_list(node, k)
+        if values is not None:
+            target[k] = _pad(values, size, 0)
+    return node
+
+
+def update_jamfizz_events(profile, root):
+    _sub_node(profile, root.find("event2021"), "event2021", EVENT2021_INTS, EVENT2021_LISTS)
+
+    riddles = root.find("riddles_data")
+    if riddles is not None:
+        sp = [{k: _int(n, k) for k in SP_RIDDLES_INTS} for n in riddles.findall("sp_riddles")]
+        if sp:
+            profile["riddles"]["sp"] = sp
+        sh = [_int(n, "sh_riddles_id") for n in riddles.findall("sh_riddles")]
+        if sh:
+            profile["riddles"]["sh"] = sh
+
+    p27 = _sub_node(profile, root.find("event_p27"), "event_p27", EVENT_P27_INTS)
+    if p27 is not None:
+        for n in p27.findall("team"):
+            profile["event_p27"]["teams"][str(_int(n, "team_id"))] = {
+                "ex_no": _int(n, "ex_no"), "point": _int(n, "point"), "is_cleared": _int(n, "is_cleared")}
+        for n in p27.findall("battery"):
+            profile["event_p27"]["batteries"][str(_int(n, "battery_id"))] = {
+                "energy": _int(n, "energy"), "is_cleared": _int(n, "is_cleared")}
+
+    p28 = _sub_node(profile, root.find("event_p28"), "event_p28", EVENT_P28_INTS)
+    if p28 is not None:
+        order = _int_list(p28, "current_order")
+        if order is not None:
+            profile["event_p28"]["current_order"] = _pad(order, 3)
+        for n in p28.findall("order"):
+            profile["event_p28"]["orders"][str(_int(n, "id"))] = {
+                "point": _int(n, "point"), "patties": _pad(_int_list(n, "patties"), 40), "is_cleared": _int(n, "is_cleared")}
+        lamp = p28.find("neon_lamp")
+        if lamp is not None:
+            profile["event_p28"]["neon_lamp"] = {
+                "id": _int(lamp, "id"), "point": _int(lamp, "point"), "is_cleared": _int(lamp, "is_cleared")}
+        for n in p28.findall("neko_stamp"):
+            profile["event_p28"]["neko_stamps"][str(_int(n, "id"))] = {
+                "point": _int(n, "point"), "is_cleared": _int(n, "is_cleared")}
+
+    for n in root.findall("fes"):
+        profile["fes"][str(_int(n, "fes_id"))] = {
+            "index": _int(n, "chapter_index"), "points": _int(n, "gauge_point"), "cleared": _int(n, "is_cleared")}
 
 
 def update_profile_from_write(profile, root):
@@ -333,6 +498,11 @@ def update_profile_from_write(profile, root):
                     "complete": _int(node, "mission_comp"),
                     "day": today,
                 }
+
+    update_jamfizz_events(profile, root)
+    # option_tuto is read-only for the game (never in the write psmap): treat it like
+    # tutorial and mark the option tutorial as seen once a play has been saved.
+    profile["option_tuto"] = 1
 
     # Unlock NAVI-kun and Kenshi Yonezu songs after one play (bemaniutils does the same)
     for songid in (1592, 1608):
@@ -532,6 +702,50 @@ async def player24_update_ranking(request: Request):
                 )
             )
     return await _respond(request, E.response(E.player24(*children)))
+
+
+@router.post("/{gameinfo}/player24/read_option")
+async def player24_read_option(request: Request):
+    # Jam&Fizz: request ref_id/music_num/sheet_num, response parsed by the option
+    # game-data reader (same node/types as player24.read <option>).
+    request_info = await core_process_request(request)
+    game_version = request_info["game_version"]
+    refid = _text(request_info["root"][0], "ref_id")
+    card, profile = get_game_profile(refid, game_version) if refid else (None, None)
+    if profile is None:
+        profile = new_game_profile(game_version, "")
+    return await _respond(request, E.response(E.player24(option_node(profile))))
+
+
+@router.post("/{gameinfo}/player24/write_course")
+async def player24_write_course(request: Request):
+    # Jam&Fizz custom course result (course_name, stage1..4 music/sheet, norma, medal,
+    # total_score, max_combo, last_gauge, license). Response carries no payload.
+    request_info = await core_process_request(request)
+    game_version = request_info["game_version"]
+    root = request_info["root"][0]
+    refid = _text(root, "ref_id")
+    card, profile = get_game_profile(refid, game_version) if refid else (None, None)
+    if profile is not None:
+        course_id = str(_int(root, "course_id"))
+        record = {
+            "name": _text(root, "course_name", ""),
+            "count": profile["custom_courses"].get(course_id, {}).get("count", 0) + 1,
+            "stages": [[_int(root, f"stage{i}_music_num", -1), _int(root, f"stage{i}_sheet_num")] for i in range(1, 5)],
+        }
+        for k in ("norma_type", "norma_1_num", "norma_2_num", "clear_medal", "clear_norma",
+                  "total_score", "max_combo", "last_gauge", "chara_num"):
+            record[k] = _int(root, k)
+        profile["custom_courses"][course_id] = record
+        save_game_profile(refid, game_version, profile)
+    return await _respond(request, E.response(E.player24()))
+
+
+@router.post("/{gameinfo}/player24/tsumtsum")
+async def player24_tsumtsum(request: Request):
+    # Jam&Fizz: <player24 ref_id="" uid=""/> -> <status> s8 (0 = ok)
+    request_info = await core_process_request(request)
+    return await _respond(request, E.response(E.player24(E.status(0, __type="s8"))))
 
 
 @router.post("/{gameinfo}/player24/friend")

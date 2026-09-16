@@ -6,8 +6,11 @@ from tinydb import where
 from core_common import E
 from core_database import get_db
 
-# pop'n music pcb24/info24/player24 protocol (pop'n 24 Usaneko era), ported from
-# bemaniutils popn/common.py + usaneko.py. Shared helpers for info24 and player24.
+# pop'n music pcb24/info24/player24 protocol. The module names date from pop'n 24
+# Usaneko, but M39-2025092400 is pop'n music Jam&Fizz (popn22.dll psmap tables):
+# account nice[100], sp_riddles_id/option_tuto/sc_news_no, option lift/guide_se_vol,
+# event2021, riddles_data, event_p27 (team/battery), event_p28 (burger orders,
+# neon_lamp, neko_stamp). Based on bemaniutils popn/common.py + usaneko.py.
 
 GAME_MAX_DECO_ID = 97
 
@@ -141,17 +144,24 @@ ACCOUNT_INTS = (
     "tutorial", "read_news", "area_id", "use_navi", "ranking_node", "chara_ranking_kind_id",
     "navi_evolution_flg", "ranking_news_last_no", "power_point", "player_point",
     "chocolate_sp_chara", "chocolate_pass_cnt", "chocolate_hon_cnt", "chocolate_giri_cnt", "chocolate_kokyu_cnt",
+    "card_again_count", "sp_riddles_id", "sc_news_no",
 )
-ACCOUNT_LISTS = {"nice": 30, "favorite_chara": 20, "special_area": 8, "chocolate_charalist": 5, "teacher_setting": 10, "power_point_list": 20}
+ACCOUNT_LISTS = {"nice": 100, "favorite_chara": 20, "special_area": 8, "chocolate_charalist": 5, "teacher_setting": 10, "power_point_list": 20}
 CONFIG_INTS = (
     "mode", "chara", "music", "sheet", "category", "sub_category", "chara_category", "course_id",
     "course_folder", "ms_banner_disp", "ms_down_info", "ms_side_info", "ms_raise_type", "ms_rnd_type", "banner_sort",
 )
 OPTION_INTS = (
     "hispeed", "popkun", "hidden", "hidden_rate", "sudden", "sudden_rate", "randmir", "gauge_type",
-    "ojama_0", "ojama_1", "forever_0", "forever_1", "full_setting", "judge", "guide_se",
+    "ojama_0", "ojama_1", "forever_0", "forever_1", "full_setting", "judge", "guide_se", "guide_se_vol", "lift", "lift_rate",
 )
-OPTION_BOOLS = {"hidden", "sudden", "forever_0", "forever_1", "full_setting"}
+OPTION_BOOLS = {"hidden", "sudden", "forever_0", "forever_1", "full_setting", "lift"}
+OPTION_DEFAULTS = {"guide_se_vol": 3}
+EVENT2021_INTS = ("point", "step", "step_nos")
+EVENT2021_LISTS = {"quest_point": 8, "quest_point_nos": 13}
+EVENT_P27_INTS = ("team_id", "first_play", "select_battery_id", "elem_first_play", "today_first_play")
+EVENT_P28_INTS = ("burger_first_play", "burger_daily_bonus", "neko_daily_bonus")
+SP_RIDDLES_INTS = ("kaimei_gauge", "is_cleared", "riddles_cleared", "select_count", "other_count")
 CUSTOMIZE_INTS = ("effect_left", "effect_center", "effect_right", "hukidashi", "comment_1", "comment_2")
 
 
@@ -174,7 +184,11 @@ def new_game_profile(game_version, name):
         "chocolate_hon_cnt": 0,
         "chocolate_giri_cnt": 0,
         "chocolate_kokyu_cnt": 0,
-        "nice": [-1] * 30,
+        "card_again_count": 0,
+        "sp_riddles_id": -1,
+        "sc_news_no": -1,
+        "option_tuto": 0,
+        "nice": [-1] * 100,
         "favorite_chara": [-1] * 20,
         "special_area": [-1] * 8,
         "chocolate_charalist": [-1] * 5,
@@ -186,7 +200,7 @@ def new_game_profile(game_version, name):
         "config": {"mode": 0, "chara": -1, "music": -1, "sheet": 0, "category": -1, "sub_category": -1,
                    "chara_category": -1, "course_id": -1, "course_folder": -1, "ms_banner_disp": -1,
                    "ms_down_info": -1, "ms_side_info": -1, "ms_raise_type": -1, "ms_rnd_type": -1, "banner_sort": -1},
-        "option": {k: 0 for k in OPTION_INTS},
+        "option": {k: OPTION_DEFAULTS.get(k, 0) for k in OPTION_INTS},
         "customize": {k: 0 for k in CUSTOMIZE_INTS},
         "navi_points": None,
         "items": {},  # "type:id" -> {"param", "is_new", "get_time"}
@@ -195,6 +209,14 @@ def new_game_profile(game_version, name):
         "area": {},  # area_id -> {index, points, cleared, diary}
         "courses": {},  # "course_id:sheet" -> {score, clear_type, clear_rank, count, pref, lid}
         "missions": {},  # mission_id -> {points, complete, day}
+        "fes": {},  # fes_id -> {index, points, cleared}
+        "event2021": {"point": 0, "step": 0, "quest_point": [0] * 8, "step_nos": 0, "quest_point_nos": [0] * 13},
+        "riddles": {"sp": [], "sh": []},  # sp: list of {kaimei_gauge,...} (index = riddle no), sh: list of ids
+        "event_p27": {"team_id": 0, "first_play": 0, "select_battery_id": 0, "elem_first_play": 0,
+                      "today_first_play": 0, "teams": {}, "batteries": {}},
+        "event_p28": {"burger_first_play": 0, "burger_daily_bonus": 0, "neko_daily_bonus": 0,
+                      "current_order": [-1, -1, -1], "orders": {}, "neon_lamp": None, "neko_stamps": {}},
+        "custom_courses": {},  # course_id -> last write_course payload
         "play_count": 0,
         "today_play_cnt": 0,
         "consecutive_days": 0,

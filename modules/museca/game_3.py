@@ -424,7 +424,7 @@ async def museca_game_3_common(request: Request):
     limited = []
     for mid, charts in sorted(load_music_db().items()):
         for chart, info in sorted(charts.items()):
-            if info["limited"] in (LIMITED_LOCKED, LIMITED_UNLOCKABLE):
+            if info["difnum"] > 0 and info["limited"] != LIMITED_UNLOCKED:
                 limited.append(
                     E.info(
                         E.music_id(mid, __type="s32"),

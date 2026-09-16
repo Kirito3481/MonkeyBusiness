@@ -1,3 +1,5 @@
+import random
+
 from fastapi import APIRouter, Request, Response
 from tinydb import Query, where
 
@@ -26,6 +28,22 @@ PROFILE_TABLES = {
     "PIX": "museca_profile",
     "MBR": "reflec_profile",
     "M39": "popn_profile",
+}
+
+# Player id key each game module stores in its profile record. Handlers such as
+# IIDX music.getrank index it on every record, so a record must never exist
+# without it.
+ID_KEYS = {
+    "iidx_profile": "iidx_id",
+    "ddr_profile": "ddr_id",
+    "sdvx_profile": "sdvx_id",
+    "gitadora_profile": "gitadora_id",
+    "nostalgia_profile": "nostalgia_id",
+    "dancerush_profile": "drs_id",
+    "jubeat_profile": "jubeat_id",
+    "museca_profile": "museca_id",
+    "reflec_profile": "reflec_id",
+    "popn_profile": "popn_id",
 }
 
 STATUS_OK = 0
@@ -90,8 +108,17 @@ def create_profile(game_id, game_version, cid, pin):
     profile = get_profile(game_id, cid)
 
     profile["pin"] = pin
+    ensure_player_id(target_table, profile)
 
     get_db().table(target_table).upsert(profile, where("card") == cid)
+
+
+def ensure_player_id(target_table, profile):
+    id_key = ID_KEYS.get(target_table)
+    if id_key and id_key not in profile:
+        profile[id_key] = random.randint(10000000, 99999999)
+        return True
+    return False
 
 
 def has_played(game_id, cid):
@@ -165,8 +192,12 @@ async def cardmng_inquire(request: Request):
         if model in PROFILE_TABLES:
             # Registered by another game: give this game its own record now so its
             # first-play flow finds the card without a second registration.
-            if get_db().table(get_target_table(model)).get(where("card") == cid) is None:
+            record = get_db().table(get_target_table(model)).get(where("card") == cid)
+            if record is None:
                 create_profile(model, request_info["game_version"], cid, pin)
+            elif ensure_player_id(get_target_table(model), record):
+                # Record created before ids were assigned here: repair it.
+                get_db().table(get_target_table(model)).upsert(record, where("card") == cid)
             if model == "LDJ":
                 # IIDX migrates old profiles itself (pc.oldget -> getname -> takeover),
                 # so binded must reflect this version only.

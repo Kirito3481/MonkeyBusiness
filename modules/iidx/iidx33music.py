@@ -51,9 +51,10 @@ async def iidx33music_getrank(request: Request):
         if iidxid == 0:
             continue
 
-        profile = db.table("iidx_profile").get(where("iidx_id") == iidxid)["version"][
-            str(game_version)
-        ]
+        profile_record = db.table("iidx_profile").get(where("iidx_id") == iidxid)
+        if profile_record is None or not profile_record.get("version", {}).get(str(game_version)):
+            # Unknown id or a rival that has not played this version yet: no scores.
+            continue
 
         for record in db.table("iidx_scores_best").search(
             (where("music_id") < (game_version + 1) * 1000)
@@ -82,6 +83,9 @@ async def iidx33music_getrank(request: Request):
     names = {}
     profiles = get_db().table("iidx_profile")
     for p in profiles:
+        if "iidx_id" not in p:
+            # Card known from another game but never registered in IIDX.
+            continue
         names[p["iidx_id"]] = {}
         try:
             names[p["iidx_id"]]["name"] = p["version"][str(game_version)]["djname"]
@@ -108,7 +112,7 @@ async def iidx33music_getrank(request: Request):
             }
 
         if ex_score > top_scores[music_id][chart_id]["ex_score"]:
-            top_scores[music_id][chart_id]["djname"] = names[iidx_id]["name"]
+            top_scores[music_id][chart_id]["djname"] = names.get(iidx_id, {}).get("name", "UNK")
             top_scores[music_id][chart_id]["clear_flg"] = 1
             top_scores[music_id][chart_id]["ex_score"] = ex_score
 

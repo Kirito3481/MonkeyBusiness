@@ -1,3 +1,4 @@
+import traceback
 from importlib import util
 from os import path
 from glob import glob
@@ -69,6 +70,9 @@ async def forward_slashless(
                 find_response = globals()[f"museca_{module}_{method}"]
             return await find_response(request)
         except (KeyError, UnboundLocalError):
+            if f"{module}_{method}".lower() in globals():
+                # The handler exists: the KeyError came from inside it.
+                traceback.print_exc()
             print("Try URL Slash 1 (On) if this game is supported.")
             return Response(status_code=404)
 

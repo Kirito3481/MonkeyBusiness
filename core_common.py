@@ -139,6 +139,11 @@ async def core_get_game_version_from_software_version(software_version):
         if ext >= 2023092001:
             return 12
 
+    elif model == "MBR":
+        if ext >= 2016100400:  # REFLEC BEAT VOLZZA 2
+            return 6
+        return 5
+
     elif model == "PIX":
         if ext >= 2016072600:  # MUSECA 1+1/2 (museca plus builds keep this branch)
             return 2

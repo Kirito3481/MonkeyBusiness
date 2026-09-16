@@ -19,6 +19,7 @@ def get_target_table(game_id):
         "KDZ": "iidx_profile",
         "L44": "jubeat_profile",
         "PIX": "museca_profile",
+        "MBR": "reflec_profile",
     }
 
     return target_table[game_id]

@@ -18,6 +18,8 @@ ip = get_ip()
 port = 8000
 response_compression = False
 verbose_log = True
+reload = True  # set False on a production server; restarts on code change drop game connections
+keep_alive = 300  # seconds an idle game connection stays open (games reuse HTTP/1.1 connections)
 
 arcade = "Manhwa"
 paseli = 10000

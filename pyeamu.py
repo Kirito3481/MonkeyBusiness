@@ -109,7 +109,13 @@ if __name__ == "__main__":
     print("\033[1mSource Repository\033[0m:")
     print("https://github.com/drmext/MonkeyBusiness")
     print()
-    uvicorn.run("pyeamu:app", host="0.0.0.0", port=config.port, reload=True)
+    uvicorn.run(
+        "pyeamu:app",
+        host="0.0.0.0",
+        port=config.port,
+        reload=getattr(config, "reload", True),
+        timeout_keep_alive=getattr(config, "keep_alive", 300),
+    )
 
 
 @app.post("/core")

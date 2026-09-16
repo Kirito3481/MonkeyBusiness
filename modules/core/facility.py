@@ -33,7 +33,7 @@ async def facility_get(request: Request):
                 E.countryjname("韓国", __type="str"),
                 E.regionjname("ソウル", __type="str"),
                 E.name(op.get("opname", config.arcade), __type="str"),
-                E("type", 255, __type="u8"),
+                E("type", 0, __type="u8"),
             ),
             E.line(
                 E("class", 8, __type="u8"),

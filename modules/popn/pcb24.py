@@ -26,3 +26,9 @@ async def pcb24_write(request: Request):
     # Request carries pcb_setting/name (cabinet name); nothing needs to be stored.
     request_info = await core_process_request(request)
     return await _respond(request, E.response(E.pcb24()))
+
+
+@router.post("/{gameinfo}/pcb24/error")
+async def pcb24_error(request: Request):
+    request_info = await core_process_request(request)
+    return await _respond(request, E.response(E.pcb24()))

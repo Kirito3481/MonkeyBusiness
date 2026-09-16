@@ -752,7 +752,7 @@ async def game_sv_lounge(ver: str, request: Request):
     request_info = await core_process_request(request)
 
     response = E.response(
-        E.game(E.interval(30, __type="u32")),
+        E.game(E.interval(LOBBY_INTERVAL, __type="u32")),
     )
 
     response_body, response_headers = await core_prepare_response(request, response)
@@ -843,12 +843,92 @@ async def game_sv_play_s(ver: str, request: Request):
     return Response(content=response_body, headers=response_headers)
 
 
+# ---------------------------------------------------------------- matching lobby
+# Local matching (soundvoltex.dll game.sv7_entry_s / entry_e, same shape since sv4).
+# entry_s request: c_ver/p_num/p_rest/filter/claim u8, mid/sec/entry_id u32, port u16,
+# gip/lip ip4. Response: entry_id u32 + entry*{port u16, gip ip4, lip ip4} for the
+# other cabinets to connect to (max 16, the game keeps a 200 byte table). The game
+# polls entry_s every <interval> seconds from sv*_lounge and sends entry_e{eid} to leave.
+LOBBY_INTERVAL = 10  # seconds between entry_s polls
+LOBBY_TIMEOUT = LOBBY_INTERVAL * 3  # drop entries that stopped polling
+
+lobby_entries = {}  # entry_id -> entry dict
+_next_entry_id = [1]
+
+
+def _lobby_int(node, name, default=0):
+    found = node.find(name)
+    try:
+        return int(found.text)
+    except (AttributeError, TypeError, ValueError):
+        return default
+
+
+def _lobby_text(node, name, default=""):
+    found = node.find(name)
+    return found.text if found is not None and found.text else default
+
+
+def _lobby_prune(now):
+    for eid in [k for k, v in lobby_entries.items() if now - v["time"] > LOBBY_TIMEOUT]:
+        del lobby_entries[eid]
+
+
+def _lobby_matches(mine, other):
+    # Same game version and matching type only; a different music/segment on the
+    # other side is left to the game (it negotiates over UDP once connected).
+    return other["c_ver"] == mine["c_ver"] and other["filter"] == mine["filter"]
+
+
 @router.post("/{gameinfo}/game/sv{ver}_entry_s")
 async def game_sv_entry_s(ver: str, request: Request):
     request_info = await core_process_request(request)
+    root = request_info["root"][0]
+    now = time.time()
+    _lobby_prune(now)
+
+    entry = {
+        "c_ver": _lobby_int(root, "c_ver"),
+        "p_num": _lobby_int(root, "p_num"),
+        "p_rest": _lobby_int(root, "p_rest"),
+        "filter": _lobby_int(root, "filter"),
+        "mid": _lobby_int(root, "mid"),
+        "sec": _lobby_int(root, "sec"),
+        "port": _lobby_int(root, "port", 5700),
+        "gip": _lobby_text(root, "gip", "0.0.0.0"),
+        "lip": _lobby_text(root, "lip", "0.0.0.0"),
+        "claim": _lobby_int(root, "claim"),
+        "time": now,
+    }
+
+    entry_id = _lobby_int(root, "entry_id")
+    if entry_id not in lobby_entries:
+        # A cabinet that re-enters after a timeout, or a fresh one: give it a new id.
+        # (Stale ids from the same lip/port are replaced so a reboot does not leave a ghost.)
+        for eid in [k for k, v in lobby_entries.items() if v["lip"] == entry["lip"] and v["port"] == entry["port"]]:
+            del lobby_entries[eid]
+        entry_id = _next_entry_id[0]
+        _next_entry_id[0] = _next_entry_id[0] % 0xFFFFFFFF + 1
+    lobby_entries[entry_id] = entry
+
+    others = [
+        (eid, e)
+        for eid, e in sorted(lobby_entries.items(), key=lambda kv: kv[1]["time"])
+        if eid != entry_id and _lobby_matches(entry, e)
+    ][:16]
 
     response = E.response(
-        E.game(),
+        E.game(
+            E.entry_id(entry_id, __type="u32"),
+            *[
+                E.entry(
+                    E.port(e["port"], __type="u16"),
+                    E.gip(e["gip"], __type="ip4"),
+                    E.lip(e["lip"], __type="ip4"),
+                )
+                for eid, e in others
+            ],
+        ),
     )
 
     response_body, response_headers = await core_prepare_response(request, response)
@@ -858,6 +938,10 @@ async def game_sv_entry_s(ver: str, request: Request):
 @router.post("/{gameinfo}/game/sv{ver}_entry_e")
 async def game_sv_entry_e(ver: str, request: Request):
     request_info = await core_process_request(request)
+    root = request_info["root"][0]
+
+    lobby_entries.pop(_lobby_int(root, "eid"), None)
+    _lobby_prune(time.time())
 
     response = E.response(
         E.game(),

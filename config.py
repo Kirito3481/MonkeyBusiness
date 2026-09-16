@@ -15,7 +15,7 @@ def get_ip():
 
 
 ip = get_ip()
-port = 5730
+port = 8000
 response_compression = True
 verbose_log = True
 

@@ -25,6 +25,7 @@ PROFILE_TABLES = {
     "L44": "jubeat_profile",
     "PIX": "museca_profile",
     "MBR": "reflec_profile",
+    "M39": "popn_profile",
 }
 
 STATUS_OK = 0

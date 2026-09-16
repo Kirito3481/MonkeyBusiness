@@ -139,6 +139,10 @@ async def core_get_game_version_from_software_version(software_version):
         if ext >= 2023092001:
             return 12
 
+    elif model == "M39":
+        # pcb24/info24/player24 protocol (pop'n 24 Usaneko era modules)
+        return 24
+
     elif model == "MBR":
         if ext >= 2016100400:  # REFLEC BEAT VOLZZA 2
             return 6

@@ -179,8 +179,36 @@ def update_play_statistics(profile):
 
 
 # ---------------------------------------------------------------- event info (shared with info module)
+# event_ctrl/data{type index value value2 start_time end_time} is applied by
+# reflecbeat.dll sub_1008A730. Type 1 = CEventPhaseGameData phase slots
+# (sub_10090890, index 0..11, value clamped by a per-index max). The class
+# select scene (sub_100B8960 -> sub_10090F40) needs phase index 4:
+#   class 10 (零) visible when phase >= 1
+#   class 11 (極) visible when phase >= 2 and the class 10 dojo record has clear_type 2
+# Index 4 max is 3, so value 2 is the highest meaningful phase.
+EVENT_CTRL = [
+    {"type": 1, "index": 4, "value": 2, "value2": 2},
+]
+
+
 def event_info_nodes():
-    return [E.event_ctrl(), E.item_lock_ctrl(), E.mycourse_ctrl()]
+    return [
+        E.event_ctrl(
+            *[
+                E.data(
+                    E("type", ev["type"], __type="s32"),
+                    E.index(ev["index"], __type="s32"),
+                    E.value(ev["value"], __type="s32"),
+                    E.value2(ev["value2"], __type="s32"),
+                    E.start_time(0, __type="s32"),
+                    E.end_time(0x7FFFFFFF, __type="s32"),
+                )
+                for ev in EVENT_CTRL
+            ]
+        ),
+        E.item_lock_ctrl(),
+        E.mycourse_ctrl(),
+    ]
 
 
 # ---------------------------------------------------------------- profile format

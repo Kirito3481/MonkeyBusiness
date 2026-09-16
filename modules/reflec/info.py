@@ -34,16 +34,10 @@ async def _respond(request, response):
 async def info_rb5_info_read(request: Request):
     request_info = await core_process_request(request)
 
-    # event_ctrl/data{type index value value2 start_time end_time s32} - no events
-    # item_lock_ctrl/item{type u8, id u16, param u16}                 - nothing locked
-    # mycourse_ctrl/data{mycourse_id s16, type s32, music_id s32}     - my course candidates
-    response = E.response(
-        E.info(
-            E.event_ctrl(),
-            E.item_lock_ctrl(),
-            E.mycourse_ctrl(),
-        )
-    )
+    # Same event/lock/mycourse block as player_start (see player.event_info_nodes).
+    from modules.reflec.player import event_info_nodes
+
+    response = E.response(E.info(*event_info_nodes()))
     return await _respond(request, response)
 
 

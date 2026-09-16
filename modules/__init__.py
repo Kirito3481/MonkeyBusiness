@@ -65,6 +65,8 @@ async def forward_slashless(
 
             elif game_code == "L44":
                 find_response = globals()[f"{module}_{method}"]
+            elif game_code == "PIX":
+                find_response = globals()[f"museca_{module}_{method}"]
             return await find_response(request)
         except (KeyError, UnboundLocalError):
             print("Try URL Slash 1 (On) if this game is supported.")

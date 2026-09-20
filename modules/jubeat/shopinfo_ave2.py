@@ -64,6 +64,26 @@ def genre_def_music_nodes():
     ]
 
 
+# Online matching: how long a cabinet waits for the other players at a sync point before it
+# goes on alone. With all music matching the songs differ in length, so whoever finishes first
+# sits at the result screen until the longest song is over or this time is up.
+# The game counts in half seconds (value * 30 frames) and defaults to 105 s / 50 s.
+# None = do not send the setting, the game keeps its defaults.
+SYNC_VOICE_WAIT_SECONDS = None  # start-of-play and end-of-play barrier (voice_wait_time, game default 105)
+SYNC_RESULT_WAIT_SECONDS = None  # waiting for everybody's final result (result_wait_time, game default 50)
+
+
+def _sync_wait_nodes():
+    if SYNC_VOICE_WAIT_SECONDS is None and SYNC_RESULT_WAIT_SECONDS is None:
+        return []
+    return [
+        E.sync_wait_setting(
+            E.result_wait_time(int((SYNC_RESULT_WAIT_SECONDS if SYNC_RESULT_WAIT_SECONDS is not None else 50) * 2), __type="s32"),
+            E.voice_wait_time(int((SYNC_VOICE_WAIT_SECONDS if SYNC_VOICE_WAIT_SECONDS is not None else 105) * 2), __type="s32"),
+        )
+    ]
+
+
 def jubeat_ave2_global_info():
     # Shared <info> node used by shopinfo_ave2.regist and gametop_ave2.get_info.
     no_bits = [0] * 64
@@ -86,9 +106,10 @@ def jubeat_ave2_global_info():
         E.random_option(E.is_available(True, __type="bool")),
         E.judge_disp(E.is_available(True, __type="bool")),
         E.password_match(E.is_available(True, __type="bool")),
-        E.april_fools_2024(E.is_available(False, __type="bool")),
+        E.april_fools_2024(E.is_available(True, __type="bool")),
         E.update_2024091800(E.is_available(True, __type="bool")),
         E.stealth_extend(E.is_available(True, __type="bool")),
+        *_sync_wait_nodes(),
         E.lightchat(
             E.map_list(
                 E.map(

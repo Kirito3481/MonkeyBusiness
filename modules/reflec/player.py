@@ -44,8 +44,9 @@ CUSTOM_INTS = (
 )
 BASE_INTS = ("mg", "ap", "uattr", "money", "class", "class_ar", "skill_point")
 
-# refid -> {"plyid", "ga", "gp", "la", "pnid", "time"}; cleared on player_end / server restart
-play_sessions = {}
+# refid -> {"plyid", "extid", "ga", "gp", "la", "pnid", "time"}. Lives in state.py because this
+# file is loaded twice (see there); a dict defined here would not be the one lobby.py sees.
+from modules.reflec.state import play_sessions  # noqa: E402
 
 
 # ---------------------------------------------------------------- helpers
@@ -769,19 +770,22 @@ async def player_rb5_player_read_rival_score_5(request: Request):
             & (where("note_grade") == chart)
         )
 
-    children = []
-    if row is not None:
-        prof = card.get("version", {}).get(str(game_version), {})
-        children.append(
+    # The game's receiver (reflecbeat.dll sub_1009B6A0) maps player_select_score with all five
+    # fields required; without the node it logs "psmap: no user_id in property" and fails the
+    # request. A player without a record on this chart is answered with score 0.
+    prof = (card.get("version", {}).get(str(game_version)) if card else None) or {}
+    response = E.response(
+        E.player(
             E.player_select_score(
                 E.user_id(extid, __type="s32"),
                 E.name(prof.get("name", ""), __type="str"),
-                E.m_score(row["score"], __type="s32"),
-                E.m_scoreTime(row["best_score_time"], __type="s32"),
+                E.m_score(row["score"] if row else 0, __type="s32"),
+                E.m_scoreTime(row["best_score_time"] if row else 0, __type="s32"),
                 E.m_iconID(prof.get("config", {}).get("icon_id", 0), __type="s16"),
             )
         )
-    return await _respond(request, E.response(E.player(*children)))
+    )
+    return await _respond(request, response)
 
 
 @router.post("/{gameinfo}/player/rb5_player_read_rival_ranking_data_5")
@@ -860,6 +864,10 @@ async def player_rb5_player_write_5(request: Request):
         save_game_profile(refid, game_version, profile)
         card = get_card(refid)
         extid = card["reflec_id"]
+        # A new card had no id yet when rb5_player_start opened the session; the lobby looks
+        # the session up by this id.
+        if refid in play_sessions:
+            play_sessions[refid]["extid"] = extid
         save_stage_logs(extid, game_version, root)
 
     return await _respond(request, E.response(E.player(E.uid(extid, __type="s32"))))

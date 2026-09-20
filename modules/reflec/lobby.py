@@ -17,7 +17,7 @@ router.model_whitelist = ["MBR"]
 LOBBY_INTERVAL = 120
 LOBBY_MAX_AGE = 600  # seconds without refresh before an entry is dropped
 
-lobbies = {}
+from modules.reflec.state import lobbies  # noqa: E402  (shared: this file is loaded twice, see state.py)
 
 ENTRY_INTS = ("mid", "ng", "mopt", "pref", "stg", "pside", "eatime", "gp", "ver")
 
@@ -71,11 +71,18 @@ async def lobby_rb5_lobby_entry(request: Request):
 
     children = [E.interval(LOBBY_INTERVAL, __type="s32"), E.interval_p(LOBBY_INTERVAL, __type="s32")]
 
+    # The game's receiver (reflecbeat.dll sub_1009A8C0) fails the request unless the response has
+    # a non-zero eid (or eid 0 plus a complete e node), so an entry is always made. The session is
+    # looked up by the card too: a card registered during this credit had no id at player_start,
+    # and a server restart forgets the sessions altogether.
     extid = _int(e, "uid", -1)
     card = get_card_by_extid(extid)
-    prof = card.get("version", {}).get(str(game_version)) if card else None
+    prof = (card.get("version", {}).get(str(game_version)) if card else None) or {}
     session = next((s for s in play_sessions.values() if s.get("extid") == extid), None)
-    if prof is not None and session is not None:
+    if session is None and card is not None:
+        session = play_sessions.get(card.get("card"))
+    session = session or {}
+    if e is not None:
         remove_lobbies_of(extid)
         eid = random.randint(1, 0x7FFFFFFF)
         while eid in lobbies:
@@ -85,7 +92,7 @@ async def lobby_rb5_lobby_entry(request: Request):
             "uid": extid,
             "uattr": prof.get("uattr", 0),
             "pn": prof.get("name", ""),
-            "plyid": session["plyid"],
+            "plyid": session.get("plyid", 0),
             "mg": prof.get("mg", 0),
             "lid": _text(e, "lid", "") or "",
             "sn": _text(e, "sn", "") or "",

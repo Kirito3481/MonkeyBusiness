@@ -1,6 +1,10 @@
+import datetime
+import random
+
 from fastapi import APIRouter, Request, Response
 
 from core_common import core_process_request, core_prepare_response, E
+from modules.jubeat.musicdb_ave2 import ave2_newest_first
 
 router = APIRouter(prefix="/local", tags=["local"])
 router.model_whitelist = ["L44"]
@@ -73,6 +77,35 @@ SYNC_VOICE_WAIT_SECONDS = None  # start-of-play and end-of-play barrier (voice_w
 SYNC_RESULT_WAIT_SECONDS = None  # waiting for everybody's final result (result_wait_time, game default 50)
 
 
+# Weekly recommended songs (music_db.dll WeeklyMusic::ReadXmlNode):
+#   weekly_music/value(s32)  +  weekly_music/music_list/<any tag id="music id">...
+# The songs get their own folder in the music select, the information screen after login shows
+# that there are weekly songs, and playing one multiplies the result bonus by 1.2 instead of 1.0
+# (a challenge / bonus song gets 1.4). The game stores `value` but never reads it; it carries the
+# week here. A new set every Monday (server time), the same for everybody, half licensed songs
+# and half KONAMI originals. Needs music_db_ave2.json, without it the list stays empty.
+WEEKLY_MUSIC_COUNT = 10
+
+
+def weekly_music(day=None):
+    """(week number yyyyww, [music ids]) of the ISO week `day` (a datetime.date, default today) is in."""
+    year, week, _ = (day or datetime.date.today()).isocalendar()
+    rng = random.Random(f"weekly-{year}-{week}")
+    licensed, original = ave2_newest_first(False), ave2_newest_first(True)
+    half = WEEKLY_MUSIC_COUNT // 2
+    picks = rng.sample(licensed, min(half, len(licensed)))
+    picks += rng.sample(original, min(WEEKLY_MUSIC_COUNT - len(picks), len(original)))
+    return year * 100 + week, sorted(picks)
+
+
+def _weekly_music_node():
+    week, music_ids = weekly_music()
+    return E.weekly_music(
+        E.value(week, __type="s32"),
+        E.music_list(*[E.music(id=str(music_id)) for music_id in music_ids]),
+    )
+
+
 def _sync_wait_nodes():
     if SYNC_VOICE_WAIT_SECONDS is None and SYNC_RESULT_WAIT_SECONDS is None:
         return []
@@ -93,7 +126,7 @@ def jubeat_ave2_global_info():
         E.share_music(),
         E.genre_def_music(*genre_def_music_nodes()),  # Category Select Screen Default Music List
         E.black_jacket_list(no_bits, __type="s32"),  # Music Jacket Censorship
-        E.weekly_music(),
+        _weekly_music_node(),
         E.white_music_list(WHITE_MUSIC_LIST, __type="s32"),  # Playable Music List
         E.white_marker_list([-1, 127231] + [0] * 14, __type="s32"),  # Allowed Marker List
         E.white_theme_list([7295] + [0] * 15, __type="s32"),  # Allowed Background List

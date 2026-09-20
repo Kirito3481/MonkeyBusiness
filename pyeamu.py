@@ -129,7 +129,12 @@ async def services_get(
 ):
     request_info = await core_process_request(request)
 
-    request_address = f"{urlparse(str(request.url)).netloc}:{config.port}"
+    # The address the client reached us at. A client that names the port in its Host header
+    # (everything except the games' own HTTP stack does) must not get the port a second time:
+    # "http://host:8000:8000/fwdr" is not a valid URL.
+    request_address = urlparse(str(request.url)).netloc
+    if ":" not in request_address.rsplit("]", 1)[-1]:  # no port given ("]" ends an IPv6 literal)
+        request_address = f"{request_address}:{config.port}"
 
     services = {}
 

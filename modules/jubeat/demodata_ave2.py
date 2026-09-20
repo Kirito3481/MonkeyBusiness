@@ -43,7 +43,11 @@ async def demodata_ave2_get_news(request: Request):
     request_info = await core_process_request(request)
 
     response = E.response(
-        E.demodata_ave2(),
+        E.demodata_ave2(
+            E.data(
+                E.officialnews(count=0),
+            )
+        ),
     )
 
     response_body, response_headers = await core_prepare_response(request, response)

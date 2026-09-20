@@ -1,5 +1,7 @@
+import json
 import random
 import time
+from os import path
 
 from tinydb import where
 
@@ -43,6 +45,40 @@ CUSTOM_INTS = (
     "st_hazard", "st_clr_cond", "voice_message_volume",
 )
 BASE_INTS = ("mg", "ap", "uattr", "money", "class", "class_ar", "skill_point")
+
+# Force unlock. The game keeps one table per item type (0..10) and only takes released/info
+# entries with id < the size of that table (reflecbeat.dll dword_1029DB18, receiver sub_100869B0).
+# Type 0 is music, its param is a chart bitmask (1 basic, 2 medium, 4 hard, 8 special, checked in
+# sub_100AE000); 1..5 are the customize items, 6 the icons, the rest has no names in the dll.
+# The game only writes back entries it changed itself, so nothing forced here ends up in the
+# database and switching these off gives the player's real unlocks back.
+FORCE_UNLOCK_SONGS = True
+FORCE_UNLOCK_ITEMS = True
+ITEM_COUNTS = (850, 25, 15, 11, 15, 9, 547, 134, 4, 7, 100)
+FORCE_UNLOCK_TIME = 1475539200  # 2016-10-04, old enough that nothing shows up as newly released
+
+try:
+    with open(path.join(path.dirname(path.abspath(__file__)), "music_db_volzza2.json"), encoding="utf-8") as _fh:
+        # id -> [basic, medium, hard, special] levels, 0 = no such chart (from the dll's music table,
+        # removed songs left out)
+        VOLZZA2_MUSIC = {int(k): v for k, v in json.load(_fh).items()}
+except (OSError, ValueError):
+    VOLZZA2_MUSIC = {}
+
+
+def forced_released():
+    """"type:id" -> {"param", "time"} of everything the force unlock switches hand out."""
+    forced = {}
+    if FORCE_UNLOCK_SONGS:
+        for music_id, levels in VOLZZA2_MUSIC.items():
+            param = sum(1 << chart for chart, level in enumerate(levels[:4]) if level > 0)
+            if param and music_id < ITEM_COUNTS[0]:
+                forced[f"0:{music_id}"] = {"param": param, "time": FORCE_UNLOCK_TIME}
+    if FORCE_UNLOCK_ITEMS:
+        for item_type in range(1, len(ITEM_COUNTS)):
+            for item_id in range(ITEM_COUNTS[item_type]):
+                forced[f"{item_type}:{item_id}"] = {"param": 0, "time": FORCE_UNLOCK_TIME}
+    return forced
 
 # refid -> {"plyid", "extid", "ga", "gp", "la", "pnid", "time"}. Lives in state.py because this
 # file is loaded twice (see there); a dict defined here would not be the one lobby.py sees.
@@ -244,14 +280,18 @@ def format_profile(extid, profile):
     cus = profile["custom"]
     rivals = _rival_cards(profile)
 
+    # The player's own unlocks on top of the forced ones: their insert_time wins, chart bits add up.
+    merged = forced_released()
+    for k, v in profile["released"].items():
+        merged[k] = {"param": v.get("param", 0) | merged.get(k, {}).get("param", 0), "time": v.get("time", now)}
     released = [
         E.info(
             E("type", int(k.split(":")[0]), __type="u8"),
             E("id", int(k.split(":")[1]), __type="u16"),
-            E.param(v.get("param", 0), __type="u16"),
-            E.insert_time(v.get("time", now), __type="s32"),
+            E.param(v["param"], __type="u16"),
+            E.insert_time(v["time"], __type="s32"),
         )
-        for k, v in profile["released"].items()
+        for k, v in merged.items()
     ]
     announce = [
         E.info(

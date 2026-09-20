@@ -6,6 +6,7 @@ from fastapi import APIRouter, Request, Response
 
 from core_common import core_process_request, core_prepare_response, E
 from core_database import get_db
+from modules.jubeat.fcchallenge_ave2 import fc_challenge_result
 from modules.jubeat.gametop_ave2 import get_profile, get_game_profile
 
 router = APIRouter(prefix="/local", tags=["local"])
@@ -302,6 +303,20 @@ def save_scores(jid, game_version, result, profile):
         profile["last"]["seq_id"] = seq
 
 
+def update_fc_challenge(profile, result, player):
+    """Full combo challenge: today's state from the tune results, the whim state as the game sends it."""
+    tunes = []
+    for tune in result.findall("tune") if result is not None else []:
+        score_node = tune.find("player/score")
+        if score_node is not None:
+            tunes.append((_int(tune, "music", -1), int(score_node.get("seq", "0")), int(score_node.get("clear", "0"))))
+    whim = player.find("fc_challenge/whim") if player is not None else None
+    if whim is not None:
+        fc_challenge_result(profile, tunes, _int(whim, "music_id"), _int(whim, "state"))
+    else:
+        fc_challenge_result(profile, tunes)
+
+
 @router.post("/{gameinfo}/gameend_ave2/regist")
 async def gameend_ave2_regist(request: Request):
     request_info = await core_process_request(request)
@@ -320,6 +335,7 @@ async def gameend_ave2_regist(request: Request):
         jid = card.get("jubeat_id", _int(player, "jid"))
         update_profile_from_regist(profile, info, player)
         save_scores(jid, game_version, result, profile)
+        update_fc_challenge(profile, result, player)
         _save_profile(refid, game_version, profile)
 
     response = E.response(

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Request, Response
 
 from core_common import core_process_request, core_prepare_response, E
 from core_database import get_db
+from modules.jubeat.fcchallenge_ave2 import fc_challenge_refresh
 from modules.jubeat.shopinfo_ave2 import jubeat_ave2_global_info
 
 router = APIRouter(prefix="/local", tags=["local"])
@@ -222,6 +223,8 @@ def format_profile(jid, profile):
     fill = profile["fill_in_category"]
     jbox = profile["jbox"]
     born = profile["born"]
+    # full combo challenge of today; see fcchallenge_ave2 (the handlers refresh and save it)
+    fcc = profile.get("fc_challenge") or {"today": {"music_id": 0, "state": 0}, "whim": {"music_id": 0, "state": 0}}
 
     return E.response(
         E.gametop_ave2(
@@ -291,12 +294,12 @@ def format_profile(jid, profile):
                     ),
                     E.fc_challenge(
                         E.today(
-                            E.music_id(0, __type="s32"),
-                            E.state(0, __type="u8"),
+                            E.music_id(fcc["today"]["music_id"], __type="s32"),
+                            E.state(fcc["today"]["state"], __type="u8"),
                         ),
                         E.whim(
-                            E.music_id(0, __type="s32"),
-                            E.state(0, __type="u8"),
+                            E.music_id(fcc["whim"]["music_id"], __type="s32"),
+                            E.state(fcc["whim"]["state"], __type="u8"),
                         ),
                     ),
                     E.free_first_play(
@@ -429,6 +432,7 @@ async def gametop_ave2_regist(request: Request):
         all_profiles_for_card["jubeat_id"] = random.randint(10000000, 99999999)
 
     all_profiles_for_card["version"][str(game_version)] = new_game_profile(game_version, name)
+    fc_challenge_refresh(all_profiles_for_card["version"][str(game_version)], all_profiles_for_card["jubeat_id"], game_version)
 
     db.upsert(all_profiles_for_card, where("card") == refid)
 
@@ -454,7 +458,12 @@ async def gametop_ave2_get_pdata(request: Request):
         # 109 = NO_PROFILE, game falls back to gametop_ave2.regist
         response = E.response(E.gametop_ave2(status=109))
     else:
-        response = format_profile(get_profile(refid)["jubeat_id"], profile)
+        card = get_profile(refid)
+        if fc_challenge_refresh(profile, card["jubeat_id"], game_version):
+            # a new day: keep the new challenge so gameend can update the same songs
+            card["version"][str(game_version)] = profile
+            get_db().table("jubeat_profile").upsert(card, where("card") == refid)
+        response = format_profile(card["jubeat_id"], profile)
 
     response_body, response_headers = await core_prepare_response(request, response)
     return Response(content=response_body, headers=response_headers)

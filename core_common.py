@@ -238,7 +238,7 @@ async def core_prepare_response(request, xml):
         version = 1
         unix_time = int(time.time())
         prng = next(prng_init) & 0xFFFF
-        response_headers["X-Eamuse-Info"] = f"{version}-{unix_time:04x}-{prng:02x}"
+        response_headers["X-Eamuse-Info"] = f"{version}-{unix_time:08x}-{prng:04x}"
         response = EamuseARC4(unix_time.to_bytes(4), prng.to_bytes(2)).encrypt(response)
     else:
         response = bytes(response)

@@ -5,7 +5,9 @@ from fastapi import APIRouter, Request, Response
 
 from core_common import core_process_request, core_prepare_response, E
 
-router = APIRouter(prefix="/local", tags=["local"])
+# jubeat.dll (sub_10166FB0) registers lobby_ave2 on the "lobby" service, every other module
+# on "local": the tag has to be "lobby" or services.get does not give the game a lobby url.
+router = APIRouter(prefix="/lobby", tags=["lobby"])
 router.model_whitelist = ["L44"]
 
 # Protocol (from jubeat.dll lobby_ave2 sender/receiver):

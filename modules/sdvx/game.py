@@ -12,7 +12,9 @@ from fastapi import APIRouter, Request, Response
 from core_common import core_process_request, core_prepare_response, E
 from core_database import get_db
 
-router = APIRouter(prefix="/local2", tags=["local2"])
+# soundvoltex.dll registers "game" on "local2" up to EXCEED GEAR and on "local" in NABLA
+# (sv7); ess.dll (eventlog) stays on "local2". Both names lead to this router.
+router = APIRouter(prefix="/local2", tags=["local2", "local"])
 router.model_whitelist = ["KFC"]
 
 

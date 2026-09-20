@@ -7,7 +7,8 @@ from fastapi import APIRouter, Request, Response
 from core_common import core_process_request, core_prepare_response, E
 from core_database import get_db
 
-router = APIRouter(prefix="/local", tags=["local"])
+# reflecbeat.dll: info, player, pcb and shop are CXrpcModules on "local2", lobby on "lobby2".
+router = APIRouter(prefix="/local2", tags=["local2"])
 router.model_whitelist = ["MBR"]
 
 # REFLEC BEAT VOLZZA 2 (MBR-2016100400) "info" module, ported from bemaniutils

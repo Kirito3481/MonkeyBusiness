@@ -6,7 +6,8 @@ from fastapi import APIRouter, Request, Response
 from core_common import core_process_request, core_prepare_response, E
 from modules.reflec.player import _int, _int_list, _pad, _text, get_card_by_extid, play_sessions
 
-router = APIRouter(prefix="/lobby", tags=["lobby"])
+# reflecbeat.dll: the "lobby" module is a CXrpcModule on the "lobby2" service.
+router = APIRouter(prefix="/lobby2", tags=["lobby2"])
 router.model_whitelist = ["MBR"]
 
 # REFLEC BEAT VOLZZA 2 "lobby" module (bemaniutils volzzabase.py). Entries live

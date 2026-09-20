@@ -4,7 +4,8 @@ from fastapi import APIRouter, Request, Response
 
 from core_common import core_process_request, core_prepare_response, E
 
-router = APIRouter(prefix="/local", tags=["local"])
+# reflecbeat.dll: info, player, pcb and shop are CXrpcModules on "local2", lobby on "lobby2".
+router = APIRouter(prefix="/local2", tags=["local2"])
 router.model_whitelist = ["MBR"]
 
 # REFLEC BEAT VOLZZA 2 "pcb" and "shop" modules (bemaniutils volzzabase.py).

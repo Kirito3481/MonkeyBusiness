@@ -139,15 +139,12 @@ async def services_get(
     services = {}
 
     for service in modules.routers:
-        # These two lines read `services` (the result dict), not `service` (the router), so the
-        # lists are always empty and every game is told about every service name. That mistake is
-        # load-bearing: the games ask for service names the routers' tags do not give them -
-        # jubeat (L44) registers lobby_ave2 on "lobby", Reflec Beat (MBR) uses "local2" and
-        # "lobby2", pop'n (M39) "lobby2" - and only get them because nothing is filtered. All
-        # names share one URL per tag, so filtering would change nothing but drop those names.
-        # Give the routers the tags their games really use before reading the lists from `service`.
-        model_blacklist = services.get("model_blacklist", [])
-        model_whitelist = services.get("model_whitelist", [])
+        # A game is only told about the routers meant for it. These lists used to be read from
+        # `services` (the result dict) instead of `service` (the router), which left them empty:
+        # every game got every name, and with url_slash 1 a name led to whichever router happened
+        # to carry that tag first rather than to the game's own router.
+        model_blacklist = getattr(service, "model_blacklist", None) or []
+        model_whitelist = getattr(service, "model_whitelist", None) or []
 
         if request_info["model"] in model_blacklist:
             continue
@@ -163,15 +160,20 @@ async def services_get(
         ):
             continue
 
-        k = (service.tags[0] if service.tags else service.prefix).strip("/")
         if f == "services.get" or (module == "services" and method == "get"):
             # url_slash 0
             pre = "/fwdr"
         else:
             # url_slash 1
             pre = service.prefix
-        if k not in services:
-            services[k] = urlunparse(("http", request_address, pre, None, None, None))
+        # The tags are the e-amusement service names the game registers the router's modules on
+        # (the second argument of XEmdwapa000036 / the CXrpcModule constructors in the game dll),
+        # so they decide whether the game can send those requests at all. A router that serves
+        # versions using different names lists them all (SDVX: "local2", NABLA "local").
+        for tag in service.tags or [service.prefix]:
+            k = tag.strip("/")
+            if k not in services:
+                services[k] = urlunparse(("http", request_address, pre, None, None, None))
 
     keepalive_params = {
         "pa": loopback,  # Router address

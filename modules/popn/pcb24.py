@@ -2,7 +2,8 @@ from fastapi import APIRouter, Request, Response
 
 from core_common import core_process_request, core_prepare_response, E
 
-router = APIRouter(prefix="/local", tags=["local"])
+# popn22.dll: pcb24, info24, player24 and loctest24 are on "local2", lobby24 on "lobby2".
+router = APIRouter(prefix="/local2", tags=["local2"])
 router.model_whitelist = ["M39"]
 
 # pop'n music (M39, pcb24/info24/player24 protocol = pop'n 24 Usaneko era, bemaniutils

@@ -139,6 +139,13 @@ async def services_get(
     services = {}
 
     for service in modules.routers:
+        # These two lines read `services` (the result dict), not `service` (the router), so the
+        # lists are always empty and every game is told about every service name. That mistake is
+        # load-bearing: the games ask for service names the routers' tags do not give them -
+        # jubeat (L44) registers lobby_ave2 on "lobby", Reflec Beat (MBR) uses "local2" and
+        # "lobby2", pop'n (M39) "lobby2" - and only get them because nothing is filtered. All
+        # names share one URL per tag, so filtering would change nothing but drop those names.
+        # Give the routers the tags their games really use before reading the lists from `service`.
         model_blacklist = services.get("model_blacklist", [])
         model_whitelist = services.get("model_whitelist", [])
 

@@ -29,6 +29,10 @@ def _prune():
 
 
 def remove_lobbies_of(extid):
+    # Players without an id (guests, uid 0 or -1) all look alike: never drop their entries as
+    # "the same player's old entry", they age out through _prune instead.
+    if extid is None or extid <= 0:
+        return
     for eid in [e for e, v in lobbies.items() if v["uid"] == extid]:
         del lobbies[eid]
 
@@ -122,6 +126,8 @@ async def lobby_rb5_lobby_read(request: Request):
     for entry in sorted(lobbies.values(), key=lambda v: v["time"]):
         if limit <= 0:
             break
+        # Same uid = the asking player's own entry. Players without an id share uid 0/-1, so they
+        # never see each other; showing a guest its own entry as an opponent would be worse.
         if entry["uid"] == extid or entry["ver"] != ver:
             continue
         children.append(_entry_node(entry))

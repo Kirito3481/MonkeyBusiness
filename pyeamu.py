@@ -172,7 +172,7 @@ async def services_get(
         # versions using different names lists them all (SDVX: "local2", NABLA "local").
         for tag in service.tags or [service.prefix]:
             k = tag.strip("/")
-            if k not in services:
+            if k and k not in services:  # a router with neither tag nor prefix has no name to offer
                 services[k] = urlunparse(("http", request_address, pre, None, None, None))
 
     keepalive_params = {

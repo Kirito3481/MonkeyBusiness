@@ -148,15 +148,16 @@ async def services_get(
         if model_whitelist and request_info["model"] not in model_whitelist:
             continue
 
-        if (
-            service.tags
-            and service.tags[0].startswith("api_")
+        # `a and b or c` is `(a and b) or c`: without the parentheses a router that has no
+        # tags reached `service.tags[0]` and raised IndexError.
+        if service.tags and (
+            service.tags[0].startswith("api_")
             or service.tags[0] == "slashless_forwarder"
         ):
             continue
 
         k = (service.tags[0] if service.tags else service.prefix).strip("/")
-        if f == "services.get" or module == "services" and method == "get":
+        if f == "services.get" or (module == "services" and method == "get"):
             # url_slash 0
             pre = "/fwdr"
         else:
@@ -166,12 +167,12 @@ async def services_get(
             services[k] = urlunparse(("http", request_address, pre, None, None, None))
 
     keepalive_params = {
-        "pa": loopback,
-        "ia": loopback,
-        "ga": loopback,
-        "ma": loopback,
-        "t1": 2,
-        "t2": 10,
+        "pa": loopback,  # Router address
+        "ia": loopback,  # Router address
+        "ga": loopback,  # Center address
+        "ma": loopback,  # Center address
+        "t1": 15,  # At least 15 sec
+        "t2": 120,  # At least 120 sec
     }
     services["keepalive"] = urlunparse(
         (

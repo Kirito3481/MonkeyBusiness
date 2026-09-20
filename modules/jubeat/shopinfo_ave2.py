@@ -32,6 +32,38 @@ HOT_MUSIC_LIST = [
 
 
 
+# genre_def_music: the 3 representative songs shown for each genre on the first-tune
+# genre select screen. Songs must be playable (in white_music_list and is_default /
+# add_default); otherwise the game silently uses its built-in id for that slot, and
+# several built-in ones were deleted, which shows up as an empty slot.
+GENRE_POPS, GENRE_ANIME, GENRE_SOCIALMUSIC, GENRE_TOHO, GENRE_GAME, GENRE_CLASSIC, GENRE_ORIGINAL = 1, 2, 3, 4, 5, 6, 7
+
+GENRE_DEF_MUSIC = {
+    # genre id: [music ids in priority order]
+    GENRE_POPS: [11000225, 11000186, 11000079],
+    GENRE_ANIME: [11000226, 11000115, 11000241],
+    GENRE_SOCIALMUSIC: [11000228, 11000238, 11000223],
+    GENRE_GAME: [11000221, 11000214, 11000168],
+    GENRE_CLASSIC: [10000037, 30000036, 40000047],
+    GENRE_ORIGINAL: [30000121, 10000068, 10000065],
+    GENRE_TOHO: [11000239, 11000220, 11000184],
+}
+
+
+def genre_def_music_nodes():
+    return [
+        E.genre(
+            *[E.music(id=music_id, priority=priority) for priority, music_id in enumerate(music_ids, start=1)],
+            # all three attributes are mandatory; a data_version above the client's
+            # installed data package version (0 here) would stop the parser.
+            id=genre_id,
+            release_code=2023092000,
+            data_version=0,
+        )
+        for genre_id, music_ids in GENRE_DEF_MUSIC.items()
+    ]
+
+
 def jubeat_ave2_global_info():
     # Shared <info> node used by shopinfo_ave2.regist and gametop_ave2.get_info.
     no_bits = [0] * 64
@@ -39,15 +71,15 @@ def jubeat_ave2_global_info():
     return E.info(
         E.event_info(),
         E.share_music(),
-        E.genre_def_music(),
-        E.black_jacket_list(no_bits, __type="s32"),
+        E.genre_def_music(*genre_def_music_nodes()),  # Category Select Screen Default Music List
+        E.black_jacket_list(no_bits, __type="s32"),  # Music Jacket Censorship
         E.weekly_music(),
-        E.white_music_list(WHITE_MUSIC_LIST, __type="s32"),
-        E.white_marker_list([-1, 127231] + [0] * 14, __type="s32"),
-        E.white_theme_list([7295] + [0] * 15, __type="s32"),
+        E.white_music_list(WHITE_MUSIC_LIST, __type="s32"),  # Playable Music List
+        E.white_marker_list([-1, 127231] + [0] * 14, __type="s32"),  # Allowed Marker List
+        E.white_theme_list([7295] + [0] * 15, __type="s32"),  # Allowed Background List
         E.add_default_music_list(no_bits, __type="s32"),
         E.open_music_list(OPEN_MUSIC_LIST, __type="s32"),
-        E.hot_music_list(HOT_MUSIC_LIST, __type="s32"),
+        E.hot_music_list(HOT_MUSIC_LIST, __type="s32"),  # jubility Pickup Music List
         E.expert_option(E.is_available(True, __type="bool")),
         E.konami_logo_50th(E.is_available(True, __type="bool")),
         E.all_music_matching(E.is_available(True, __type="bool")),

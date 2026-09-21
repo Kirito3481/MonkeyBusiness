@@ -16,7 +16,7 @@ def get_ip():
 
 ip = get_ip()
 port = 8000
-response_compression = False
+response_compression = True  # True answers lz77 requests with lz77; only worth it over a slow link
 verbose_log = True
 reload = True  # set False on a production server; restarts on code change drop game connections
 keep_alive = 300  # seconds an idle game connection stays open (games reuse HTTP/1.1 connections)

@@ -125,7 +125,9 @@ async def core_get_game_version_from_software_version(software_version):
             return 19
 
     elif model == "KFC":
-        if ext >= 2020090402:  # ???
+        if ext >= 2025122401:  # NABLA: its first songs were distributed on 2025-12-24, EXCEED GEAR's last on 2025-12-18
+            return 7
+        elif ext >= 2021021700 and ext < 2025122401:  # EXCEED GEAR
             return 6
 
     elif model == "REC":

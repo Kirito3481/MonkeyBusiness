@@ -47,11 +47,9 @@ def _ddr(module, method):
 
 
 def _sdvx(module, method):
-    if module == "eventlog":
-        return f"sdvx_{module}_{method}", ()
-    # game.sv6_common -> game_sv_common("6", request): one handler serves every version
-    version = "".join(c for c in method if c.isdigit())
-    return f"{module}_{''.join(c for c in method if not c.isdigit())}", (version,)
+    # game.sv6_common is game_sv6_common (modules/sdvx/exceedgear.py, nabla.py = sv7) and needs no rule;
+    # only the eventlog module shares its name with other games
+    return (f"sdvx_{module}_{method}", ()) if module == "eventlog" else None
 
 
 def _gitadora(module, method):

@@ -166,7 +166,18 @@ async def cardmng_authpass(request: Request):
 async def cardmng_bindmodel(request: Request):
     request_info = await core_process_request(request)
 
-    response = E.response(E.bindmodel(dataid=1))
+    # A game calls this for a card that is registered but has not played it yet (inquire said
+    # binded=0) and then uses the dataid from here to load and save the player. It has to be the
+    # same id inquire and getrefid hand out - the card number. A constant made SDVX look for a
+    # card "1" (500 in sv6_load) and made Nostalgia register its profile under card "1".
+    refid = request_info["root"][0].attrib.get("refid", "")
+    if refid and not is_valid_card(refid):
+        print(f"cardmng.bindmodel: rejected card number {refid!r}")
+        response = E.response(E.bindmodel(status=INVALID_CARD_STATUS))
+        response_body, response_headers = await core_prepare_response(request, response)
+        return Response(content=response_body, headers=response_headers)
+
+    response = E.response(E.bindmodel(dataid=refid or 1))
 
     response_body, response_headers = await core_prepare_response(request, response)
     return Response(content=response_body, headers=response_headers)

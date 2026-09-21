@@ -4,6 +4,7 @@ from os import path
 from tinydb import Query, where
 
 import config
+import datetime
 import random
 import time
 
@@ -35,6 +36,73 @@ def player_card(root):
     # cardmng hands the same value out as dataid, as dataid too - but refid is the one that is
     # always the card (cardmng.bindmodel used to answer dataid 1), so it goes first.
     return root.findtext("refid") or root.findtext("dataid")
+
+
+# Play statistics. The game only reads them (sv_load: play_count, day_count, today_count,
+# play_chain, max_play_chain, week_count, week_play_count, week_chain, max_week_chain) and never
+# sends them back, so they are kept here: one credit is counted per sv_save, the request the
+# game sends once when a credit ends. Days are server days, weeks run Monday to Sunday.
+PLAY_STATS_REPEAT_SECONDS = 5  # a save repeated this soon is the same credit sent again
+
+
+def _monday(day):
+    return day - datetime.timedelta(days=day.weekday())
+
+
+def _last_play_day(stats):
+    try:
+        return datetime.date.fromisoformat(stats.get("last_date", ""))
+    except ValueError:
+        return None
+
+
+def play_stats_now(game_profile, today=None):
+    """The counters as they stand today: a day, week or chain that is over reads 0."""
+    today = today or datetime.date.today()
+    stats = dict((game_profile or {}).get("play_stats", {}))
+    last = _last_play_day(stats)
+    days_ago = (today - last).days if last else None
+    weeks_ago = (_monday(today) - _monday(last)).days // 7 if last else None
+    if days_ago != 0:
+        stats["today_count"] = 0
+    if days_ago is None or days_ago > 1:
+        stats["play_chain"] = 0
+    if weeks_ago != 0:
+        stats["week_play_count"] = 0
+    if weeks_ago is None or weeks_ago > 1:
+        stats["week_chain"] = 0
+    return {
+        k: int(stats.get(k, 0))
+        for k in ("play_count", "day_count", "today_count", "play_chain", "max_play_chain",
+                  "week_count", "week_play_count", "week_chain", "max_week_chain")
+    }
+
+
+def count_play(game_profile, today=None, now=None):
+    """Count one credit. Returns False when it was the same credit sent again."""
+    today = today or datetime.date.today()
+    now = time.time() if now is None else now
+    stored = game_profile.get("play_stats", {})
+    if now - stored.get("counted_at", 0) < PLAY_STATS_REPEAT_SECONDS:
+        return False
+
+    last = _last_play_day(stored)
+    stats = play_stats_now(game_profile, today)
+    stats["play_count"] += 1
+    stats["today_count"] += 1
+    stats["week_play_count"] += 1
+    if last != today:  # first credit of the day
+        stats["day_count"] += 1
+        stats["play_chain"] += 1
+    if last is None or _monday(last) != _monday(today):  # first credit of the week
+        stats["week_count"] += 1
+        stats["week_chain"] += 1
+    stats["max_play_chain"] = max(stats["max_play_chain"], stats["play_chain"])
+    stats["max_week_chain"] = max(stats["max_week_chain"], stats["week_chain"])
+    stats["last_date"] = today.isoformat()
+    stats["counted_at"] = now
+    game_profile["play_stats"] = stats
+    return True
 
 
 def get_id_from_profile(cid):
@@ -297,15 +365,7 @@ async def game_sv_load(ver: str, request: Request):
                 E.blaster_energy(profile["earned_blaster_energy"], __type="u32"),
                 E.blaster_count(9999, __type="u32"),
                 E.extrack_energy(profile["earned_extrack_energy"], __type="u16"),
-                E.play_count(1001, __type="u32"),
-                E.day_count(301, __type="u32"),
-                E.today_count(21, __type="u32"),
-                E.play_chain(31, __type="u32"),
-                E.max_play_chain(31, __type="u32"),
-                E.week_count(9, __type="u32"),
-                E.week_play_count(101, __type="u32"),
-                E.week_chain(31, __type="u32"),
-                E.max_week_chain(1001, __type="u32"),
+                *[E(name, value, __type="u32") for name, value in play_stats_now(profile).items()],
                 E.creator_id(1, __type="u32"),
                 E.eaappli(E.relation(1, __type="s8")),
                 E.ea_shop(
@@ -590,6 +650,8 @@ async def game_sv_save(ver: str, request: Request):
             params_list.append([int(t), int(i), params[t][i]])
 
     game_profile["params"] = params_list
+
+    count_play(game_profile)
 
     profile["version"][str(game_version)] = game_profile
 

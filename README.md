@@ -13,8 +13,10 @@ Run [start.bat (Windows)](start.bat) or [start.sh (Linux, MacOS)](start.sh)
 - DDR A20P, A3, WORLD (OmniMIX/GF, BPL, and [Fake PFREE](https://github.com/drmext/BemaniPatcher/blob/nopr/ddra3.html#L133) support)
 - GD 6-10 DELTA (Battle Mode support)
 - DRS
-- NOST 3
-- SDVX 6-7
+- Nostalgia Op.3
+- SOUND VOLTEX EXCEED GEAR
+- pop'n music Jam & Fizz
+- jubeat beyond the Ave.
 
 **Note**: Playable means settings/scores *should* save and load. Events are not implemented.
 

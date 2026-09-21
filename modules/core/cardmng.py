@@ -1,4 +1,5 @@
 import random
+import re
 
 from fastapi import APIRouter, Request, Response
 from tinydb import Query, where
@@ -47,8 +48,27 @@ ID_KEYS = {
 }
 
 STATUS_OK = 0
+STATUS_NOT_ALLOWED = 110
 STATUS_NOT_REGISTERED = 112
 STATUS_INVALID_PIN = 116
+
+# A card number is the chip's 8 byte id as 16 hex digits: "E004..." for the old e-AMUSEMENT PASS
+# (ISO 15693, the E0 04 of an NXP ICODE chip) and "0..." for FeliCa (Amusement IC and phones) -
+# the same two kinds the card number cipher on the back of the card knows. Anything else did not
+# come from a card reader: inquire and getrefid answer it with "not allowed" and store nothing.
+REJECT_INVALID_CARDS = True
+# What a rejected card is answered with. avs2-ea3 turns every non-zero status into the same xrpc
+# error (-17) and hands the number on; Nostalgia (PAN 2025020501) shows its general "connection is
+# not good, try again" message for 110 and returns to the card screen. 112 must not be used: it
+# sends the game on to register the card.
+INVALID_CARD_STATUS = STATUS_NOT_ALLOWED
+VALID_CARD = re.compile(r"(?:E004[0-9A-F]{12}|0[0-9A-F]{15})", re.IGNORECASE)
+
+
+def is_valid_card(cid):
+    if not REJECT_INVALID_CARDS:
+        return True
+    return bool(cid) and VALID_CARD.fullmatch(cid) is not None and cid.strip("0") != ""
 
 
 def get_target_table(game_id):
@@ -156,8 +176,14 @@ async def cardmng_bindmodel(request: Request):
 async def cardmng_getrefid(request: Request):
     request_info = await core_process_request(request)
 
-    cid = request_info["root"][0].attrib["cardid"]
+    cid = request_info["root"][0].attrib.get("cardid", "")
     passwd = request_info["root"][0].attrib["passwd"]
+
+    if not is_valid_card(cid):
+        print(f"cardmng.getrefid: rejected card number {cid!r}")
+        response = E.response(E.getrefid(status=INVALID_CARD_STATUS))
+        response_body, response_headers = await core_prepare_response(request, response)
+        return Response(content=response_body, headers=response_headers)
 
     register_card(cid, passwd)
     if request_info["model"] in PROFILE_TABLES:
@@ -178,8 +204,16 @@ async def cardmng_getrefid(request: Request):
 async def cardmng_inquire(request: Request):
     request_info = await core_process_request(request)
 
-    cid = request_info["root"][0].attrib["cardid"]
+    cid = request_info["root"][0].attrib.get("cardid", "")
     model = request_info["model"]
+
+    if not is_valid_card(cid):
+        # "not allowed", what a real network answers for a card it will not accept; unlike 112
+        # it does not send the game on to register the card
+        print(f"cardmng.inquire: rejected card number {cid!r}")
+        response = E.response(E.inquire(status=INVALID_CARD_STATUS))
+        response_body, response_headers = await core_prepare_response(request, response)
+        return Response(content=response_body, headers=response_headers)
 
     pin = get_pin(cid)
     if pin is None:

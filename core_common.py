@@ -169,6 +169,9 @@ def lz77_log_line(what, plain_size, packed_size, seconds=None, sent=True):
     return f"\033[93mLZ77 {what}\033[0m: {sizes} ({ratio}){took}{skipped}"
 
 
+_seen_request_encodings = set()
+
+
 async def core_process_request(request):
     cl = request.headers.get("Content-Length")
     data = await request.body()
@@ -197,6 +200,13 @@ async def core_process_request(request):
     root = xml.xml_doc
     xml_text = xml.to_text()
     request.is_binxml = KBinXML.is_binary_xml(xml_dec)
+    # The third byte of a binary request names the encoding of its strings (0x80 Shift-JIS, 0xa0 UTF-8, ...);
+    # it comes from <encoding> in the game's ea3-config.xml. Said once per game, it is worth knowing.
+    request.xml_encoding = xml.encoding if request.is_binxml else None
+    game_code = root.attrib.get("model", "?").split(":")[0]
+    if (game_code, request.xml_encoding) not in _seen_request_encodings:
+        _seen_request_encodings.add((game_code, request.xml_encoding))
+        print(f"XML: {game_code} sends {'binary requests, strings in ' + str(request.xml_encoding) if request.is_binxml else 'plain XML requests'}")
 
     if config.verbose_log:
         print()
@@ -228,11 +238,14 @@ async def core_process_request(request):
     }
 
 
-async def core_prepare_response(request, xml):
+async def core_prepare_response(request, xml, encoding=None):
+    # encoding: the string encoding of a binary answer ("UTF-8", ...); None = kbinxml's default, Shift-JIS.
+    # A game reads the bytes of a string as they are, so an answer whose text the game decodes as UTF-8
+    # (SOUND VOLTEX's skill course names) has to be sent as UTF-8.
     binxml = KBinXML(xml)
 
     if request.is_binxml:
-        xml_binary = binxml.to_binary()
+        xml_binary = binxml.to_binary(encoding=encoding) if encoding else binxml.to_binary()
     else:
         xml_binary = binxml.to_text().encode("utf-8")  # TODO: Proper encoding
 

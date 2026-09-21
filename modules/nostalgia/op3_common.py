@@ -100,6 +100,13 @@ def overwrite_music_spec(mid, song):
     )
 
 
+def permitted_list_node():
+    # every sheet of every song open; parsed by sub_180172BA0 in all the responses that carry it
+    return E.permitted_list(
+        *[E.flag(PERMIT_ALL, __type="s32", sheet_type=str(sheet)) for sheet in range(4)],
+    )
+
+
 def build_music_info():
     revision, release_code, songs = load_music_list()
 
@@ -114,9 +121,7 @@ def build_music_info():
         )
 
     children += [
-        E.permitted_list(
-            *[E.flag(PERMIT_ALL, __type="s32", sheet_type=str(sheet)) for sheet in range(4)],
-        ),
+        permitted_list_node(),
         E.gamedata_flag_list(),
         E.trend_music_list(
             *[
@@ -136,8 +141,15 @@ def build_music_info():
 async def op3_common_get_common_info(request: Request):
     request_info = await core_process_request(request)
 
+    # Receiver sub_1801D2250: olupdate/delete_flag (bool) and permitted_list are required,
+    # overwrite_music_list and information_list optional. Without permitted_list the game logs
+    # 'PropertyNode::search("permitted_list") failed', fails the request and asks three more times
+    # at every boot.
     response = E.response(
-        E.get_common_info(E.olupdate(E.delete_flag(0, __type="bool")))
+        E.get_common_info(
+            E.olupdate(E.delete_flag(0, __type="bool")),
+            permitted_list_node(),
+        )
     )
 
     response_body, response_headers = await core_prepare_response(request, response)

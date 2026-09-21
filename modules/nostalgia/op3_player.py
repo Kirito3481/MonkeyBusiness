@@ -1,6 +1,7 @@
 from tinydb import Query, where
 
 import random
+import time
 
 from fastapi import APIRouter, Request, Response
 
@@ -9,6 +10,99 @@ from core_database import get_db
 
 router = APIRouter(prefix="/local", tags=["local"])
 router.model_whitelist = ["PAN"]
+
+
+# The <last> node: (name, type, value for a new player), in the order the game writes it.
+# nostalgia.dll reads every one of these from regist_playdata and get_playdata alike (receiver
+# sub_1801D4A50 -> PlayerSettingData reader sub_180189F10: each field is required, none is
+# range-checked) and applies them as they come, so a new player has to be given the game's own
+# defaults - PlayerSettingData's reset (0x18018AF40): judge_bar_pos 250, note_height 10,
+# beat_guide 1, slow_fast 1, the rest 0. (Its sheet_type is -1; the 0 sent so far is kept.)
+LAST_FIELDS = (
+    ("music_group", "s32", 0),
+    ("music_index", "s32", 0),
+    ("sheet_type", "s8", 0),
+    ("perform_type", "s32", 0),
+    ("filter_flag", "u64", 0),
+    ("brooch_index", "s32", 0),
+    ("hi_speed_level", "s32", 0),
+    ("beat_guide", "s8", 1),
+    ("headphone_volume", "s8", 0),
+    ("judge_bar_pos", "s32", 250),
+    ("hands_mode", "s8", 0),
+    ("near_setting", "s8", 0),
+    ("judge_delay_offset", "s8", 0),
+    ("key_beam_level", "s8", 0),
+    ("orbit_type", "s8", 0),
+    ("note_height", "s8", 10),
+    ("note_width", "s8", 0),
+    ("judge_width_type", "s8", 0),
+    ("beat_guide_volume", "s8", 0),
+    ("beat_guide_type", "s8", 0),
+    ("key_volume_offset", "s8", 0),
+    ("bgm_volume_offset", "s8", 0),
+    ("note_disp_type", "s8", 0),
+    ("slow_fast", "s8", 1),
+    ("option_setting", "s32", 0),
+    ("judge_effect_adjust", "s8", 0),
+    ("simple_bg", "s8", 0),
+    ("bingo_index", "s32", 0),
+)
+# sent after them by get_playdata only
+LAST_CLASS_FIELDS = (
+    ("class_basic", "s32", 0),
+    ("class_recital", "s32", 0),
+    ("grade_basic", "s32", 0),
+    ("grade_recital", "s32", 0),
+)
+
+
+def last_node(profile, with_class):
+    fields = LAST_FIELDS + (LAST_CLASS_FIELDS if with_class else ())
+    return E.last(*[E(name, profile.get(name, default), __type=kind) for name, kind, default in fields])
+
+
+# Play counts. The game keeps them itself: it takes play_count / today_play_count from
+# get_playdata, adds one for the credit (sub_180185540 / sub_180185570) and sends the new values
+# with set_total_result (request writer sub_1801856A0), so the server stores what it is told and
+# only decides when "today" is over. old_play_count is the player's count in earlier versions.
+def today():
+    return time.strftime("%Y-%m-%d")
+
+
+def play_count_nodes(card_profile, game_version):
+    game_profile = card_profile["version"].get(str(game_version), {})
+    played_today = game_profile.get("today_play_count", 0) if game_profile.get("last_play_date") == today() else 0
+    older = sum(
+        v.get("play_count", 0)
+        for k, v in card_profile["version"].items()
+        if k.isdigit() and int(k) < int(game_version)
+    )
+    return [
+        E.play_count(game_profile.get("play_count", 0), __type="s32"),
+        E.today_play_count(played_today, __type="s32"),
+        E.old_play_count(older, __type="s32"),
+        E.old_recital_count(0, __type="s32"),  # recitals of earlier versions are not recorded
+    ]
+
+
+def save_play_counts(game_profile, root):
+    def sent(name):
+        text = root.findtext(name)
+        return int(text) if text is not None else None
+
+    stored_total = game_profile.get("play_count", 0)
+    stored_today = game_profile.get("today_play_count", 0)
+    total, played_today = sent("play_count"), sent("today_play_count")
+    # max(): a repeated or late request never counts a credit twice and never takes one away
+    game_profile["play_count"] = max(stored_total, total) if total is not None else stored_total + 1
+    if game_profile.get("last_play_date") != today():
+        # first credit of the day, also when the login was before midnight and the game still
+        # counts on from yesterday's number
+        game_profile["today_play_count"] = 1
+    else:
+        game_profile["today_play_count"] = max(stored_today, played_today) if played_today is not None else stored_today + 1
+    game_profile["last_play_date"] = today()
 
 
 def get_profile(cid):
@@ -45,38 +139,10 @@ async def op3_player_regist_playdata(request: Request):
     all_profiles_for_card["version"][str(game_version)] = {
         "game_version": game_version,
         "name": name,
-        "music_group": 0,
-        "music_index": 0,
-        "sheet_type": 0,
-        "perform_type": 0,
-        "filter_flag": 0,
-        "brooch_index": 0,
-        "hi_speed_level": 0,
-        "beat_guide": 0,
-        "headphone_volume": 0,
-        "judge_bar_pos": 250,
-        "hands_mode": 0,
-        "near_setting": 0,
-        "judge_delay_offset": 0,
-        "key_beam_level": 0,
-        "orbit_type": 0,
-        "note_height": 10,
-        "note_width": 10,
-        "judge_width_type": 10,
-        "beat_guide_volume": 0,
-        "beat_guide_type": 0,
-        "key_volume_offset": 0,
-        "bgm_volume_offset": 0,
-        "note_disp_type": 0,
-        "slow_fast": 0,
-        "option_setting": 0,
-        "judge_effect_adjust": 0,
-        "simple_bg": 0,
-        "bingo_index": 0,
-        "class_basic": 0,
-        "class_recital": 0,
-        "grade_basic": 0,
-        "grade_recital": 0,
+        **{name: default for name, _, default in LAST_FIELDS + LAST_CLASS_FIELDS},
+        "play_count": 0,
+        "today_play_count": 0,
+        "last_play_date": "",
         "money": 0,
         "pianist_power": 0,
         "fame_index": 0,
@@ -99,10 +165,7 @@ async def op3_player_regist_playdata(request: Request):
             E.valid_quest_list(E.quest(index="1")),
             E.valid_course_list(E.course(index="1")),
             E.name(name, __type="str"),
-            E.play_count(0, __type="s32"),
-            E.today_play_count(0, __type="s32"),
-            E.old_play_count(0, __type="s32"),
-            E.old_recital_count(0, __type="s32"),
+            *play_count_nodes(all_profiles_for_card, game_version),
             E.music_list(
                 E.flag([-1] * 32, __type="s32", sheet_type="0"),
                 E.flag([-1] * 32, __type="s32", sheet_type="1"),
@@ -115,36 +178,7 @@ async def op3_player_regist_playdata(request: Request):
                 E.flag([-1] * 32, __type="s32", sheet_type="2"),
                 E.flag([-1] * 32, __type="s32", sheet_type="3"),
             ),
-            E.last(
-                E.music_group(0, __type="s32"),
-                E.music_index(0, __type="s32"),
-                E.sheet_type(0, __type="s8"),
-                E.perform_type(0, __type="s32"),
-                E.filter_flag(0, __type="u64"),
-                E.brooch_index(0, __type="s32"),
-                E.hi_speed_level(0, __type="s32"),
-                E.beat_guide(0, __type="s8"),
-                E.headphone_volume(0, __type="s8"),
-                E.judge_bar_pos(0, __type="s32"),
-                E.hands_mode(0, __type="s8"),
-                E.near_setting(0, __type="s8"),
-                E.judge_delay_offset(0, __type="s8"),
-                E.key_beam_level(0, __type="s8"),
-                E.orbit_type(0, __type="s8"),
-                E.note_height(0, __type="s8"),
-                E.note_width(0, __type="s8"),
-                E.judge_width_type(0, __type="s8"),
-                E.beat_guide_volume(0, __type="s8"),
-                E.beat_guide_type(0, __type="s8"),
-                E.key_volume_offset(0, __type="s8"),
-                E.bgm_volume_offset(0, __type="s8"),
-                E.note_disp_type(0, __type="s8"),
-                E.slow_fast(0, __type="s8"),
-                E.option_setting(0, __type="s32"),
-                E.judge_effect_adjust(0, __type="s8"),
-                E.simple_bg(0, __type="s8"),
-                E.bingo_index(0, __type="s32"),
-            ),
+            last_node(all_profiles_for_card["version"][str(game_version)], with_class=False),
             E.travel(
                 E.money(0, __type="s32"),
                 E.pianist_power(0, __type="s32"),
@@ -241,10 +275,7 @@ async def op3_player_get_playdata(request: Request):
             #    E.course(index="1")
             # ),
             E.name(profile["name"], __type="str"),
-            E.play_count(0, __type="s32"),
-            E.today_play_count(0, __type="s32"),
-            E.old_play_count(0, __type="s32"),
-            E.old_recital_count(0, __type="s32"),
+            *play_count_nodes(get_profile(refid), game_version),
             E.music_list(
                 E.flag([-1] * 32, __type="s32", sheet_type="0"),
                 E.flag([-1] * 32, __type="s32", sheet_type="1"),
@@ -257,40 +288,7 @@ async def op3_player_get_playdata(request: Request):
                 E.flag([-1] * 32, __type="s32", sheet_type="2"),
                 E.flag([-1] * 32, __type="s32", sheet_type="3"),
             ),
-            E.last(
-                E.music_group(profile["music_group"], __type="s32"),
-                E.music_index(profile["music_index"], __type="s32"),
-                E.sheet_type(profile["sheet_type"], __type="s8"),
-                E.perform_type(profile["perform_type"], __type="s32"),
-                E.filter_flag(profile["filter_flag"], __type="u64"),
-                E.brooch_index(profile["brooch_index"], __type="s32"),
-                E.hi_speed_level(profile["hi_speed_level"], __type="s32"),
-                E.beat_guide(profile["beat_guide"], __type="s8"),
-                E.headphone_volume(profile["headphone_volume"], __type="s8"),
-                E.judge_bar_pos(profile["judge_bar_pos"], __type="s32"),
-                E.hands_mode(profile["hands_mode"], __type="s8"),
-                E.near_setting(profile["near_setting"], __type="s8"),
-                E.judge_delay_offset(profile["judge_delay_offset"], __type="s8"),
-                E.key_beam_level(profile["key_beam_level"], __type="s8"),
-                E.orbit_type(profile["orbit_type"], __type="s8"),
-                E.note_height(profile["note_height"], __type="s8"),
-                E.note_width(profile["note_width"], __type="s8"),
-                E.judge_width_type(profile["judge_width_type"], __type="s8"),
-                E.beat_guide_volume(profile["beat_guide_volume"], __type="s8"),
-                E.beat_guide_type(profile["beat_guide_type"], __type="s8"),
-                E.key_volume_offset(profile["key_volume_offset"], __type="s8"),
-                E.bgm_volume_offset(profile["bgm_volume_offset"], __type="s8"),
-                E.note_disp_type(profile["note_disp_type"], __type="s8"),
-                E.slow_fast(profile["slow_fast"], __type="s8"),
-                E.option_setting(profile["option_setting"], __type="s32"),
-                E.judge_effect_adjust(profile["judge_effect_adjust"], __type="s8"),
-                E.simple_bg(profile["simple_bg"], __type="s8"),
-                E.bingo_index(profile["bingo_index"], __type="s32"),
-                E.class_basic(profile["class_basic"], __type="s32"),
-                E.class_recital(profile["class_recital"], __type="s32"),
-                E.grade_basic(profile["grade_basic"], __type="s32"),
-                E.grade_recital(profile["grade_recital"], __type="s32"),
-            ),
+            last_node(profile, with_class=True),
             E.travel(
                 E.money(profile["money"], __type="s32"),
                 E.pianist_power(profile["pianist_power"], __type="s32"),
@@ -337,8 +335,13 @@ async def op3_player_set_stage_result(request: Request):
 
     root = request_info["root"][0]
 
-    refid = root.find("refid").text
-    profile = get_profile(refid)
+    # no refid = a guest credit (see set_total_result): nothing to save
+    profile = get_profile(root.findtext("refid"))
+    if profile is None or root.find("stageinfo/stage") is None:
+        response = E.response(E.set_stage_result(E.player()))
+        response_body, response_headers = await core_prepare_response(request, response)
+        return Response(content=response_body, headers=response_headers)
+
     nostalgia_id = profile["nostalgia_id"]
     game_profile = profile["version"].get(str(game_version), {})
 
@@ -492,10 +495,23 @@ async def op3_player_set_total_result(request: Request):
 
     root = request_info["root"][0]
 
-    refid = root.find("refid").text
-    profile = get_profile(refid)
-    nostalgia_id = profile["nostalgia_id"]
+    # A guest credit sends set_total_result too: nostalgia.dll (request builder sub_1801D56D0)
+    # only adds refid/cardno/ecflag when a card is logged in. There is nothing to save then, and
+    # without an answer the game repeats the request five times.
+    profile = get_profile(root.findtext("refid"))
+    if profile is None:
+        response = E.response(E.set_total_result(E.player()))
+        response_body, response_headers = await core_prepare_response(request, response)
+        return Response(content=response_body, headers=response_headers)
+
+    refid = profile["card"]
     game_profile = profile["version"].get(str(game_version), {})
+
+    def save_int(key, path):
+        # a field the game left out keeps its stored value
+        text = root.findtext(path)
+        if text is not None:
+            game_profile[key] = int(text)
 
     for k in [
         "music_group",
@@ -531,7 +547,7 @@ async def op3_player_set_total_result(request: Request):
         "grade_basic",
         "grade_recital",
     ]:
-        game_profile[k] = int(root.find(f"last/{k}").text)
+        save_int(k, f"last/{k}")
 
     for k in [
         "money",
@@ -540,14 +556,14 @@ async def op3_player_set_total_result(request: Request):
         "kingdom_id",
         "quest_index",
     ]:
-        game_profile[k] = int(root.find(f"travel/{k}").text)
+        save_int(k, f"travel/{k}")
 
-    extra_param = root.find("extra_param")
-    params = extra_param.findall("param")
-    for param in params:
-        game_profile[f"param{param.get('type')}"] = [
-            int(x) for x in param.find("params_array").text.split(" ")
-        ]
+    for param in root.findall("extra_param/param"):
+        values = param.findtext("params_array")
+        if values is not None:
+            game_profile[f"param{param.get('type')}"] = [int(x) for x in values.split()]
+
+    save_play_counts(game_profile, root)
 
     profile["version"][str(game_version)] = game_profile
 

@@ -157,6 +157,18 @@ async def core_get_game_version_from_software_version(software_version):
         return 0
 
 
+def lz77_log_line(what, plain_size, packed_size, seconds=None, sent=True):
+    # one line per compressed body, e.g. "LZ77 response: 73,548 -> 12,993 bytes (17.7%), 21.3 ms"
+    ratio = f"{packed_size / plain_size:.1%}" if plain_size else "-"
+    took = f", {seconds * 1000:.1f} ms" if seconds is not None else ""
+    if what == "request":
+        sizes = f"{packed_size:,} -> {plain_size:,} bytes unpacked"
+    else:
+        sizes = f"{plain_size:,} -> {packed_size:,} bytes"
+    skipped = "" if sent else " - no gain, sent uncompressed"
+    return f"\033[93mLZ77 {what}\033[0m: {sizes} ({ratio}){took}{skipped}"
+
+
 async def core_process_request(request):
     cl = request.headers.get("Content-Length")
     data = await request.body()
@@ -175,8 +187,11 @@ async def core_process_request(request):
         xml_dec = data[: int(cl)]
         request.is_encrypted = False
 
+    lz77_note = None
     if request.compress == "lz77":
+        packed_size = len(xml_dec)
         xml_dec = lz77_decode(xml_dec)
+        lz77_note = lz77_log_line("request", len(xml_dec), packed_size)
 
     xml = KBinXML(xml_dec, convert_illegal_things=True)
     root = xml.xml_doc
@@ -186,7 +201,11 @@ async def core_process_request(request):
     if config.verbose_log:
         print()
         print("\033[94mREQUEST\033[0m:")
+        if lz77_note:
+            print(lz77_note)
         print(xml_text)
+    elif lz77_note:
+        print(lz77_note)
 
     model_parts = (root.attrib["model"], *root.attrib["model"].split(":"))
     module = root[0].tag
@@ -223,15 +242,20 @@ async def core_prepare_response(request, xml):
 
     response_headers = {"User-Agent": "EAMUSE.Httpac/1.0"}
 
-    if config.response_compression:
-        response_headers["X-Compress"] = request.compress
-        if request.compress == "lz77":
-            response = lz77_encode(xml_binary)  # roughly 2 MB/s, about 20 ms for a 70 KB profile
-        else:
-            response = xml_binary
-    else:
-        response_headers["X-Compress"] = "none" # intentionally lowercase 'none' (NOT None)
-        response = xml_binary
+    # X-Compress says how THIS body is packed, so a game that asked with lz77 can be answered
+    # with "none" (that is what it gets whenever response_compression is off).
+    response_headers["X-Compress"] = "none" # intentionally lowercase 'none' (NOT None)
+    response = xml_binary
+    if config.response_compression and request.compress == "lz77":
+        started = time.perf_counter()
+        packed = lz77_encode(xml_binary)  # roughly 2 MB/s, about 20 ms for a 70 KB profile
+        # Small bodies grow: the stream spends a flag bit per item and ends with a three byte
+        # marker. Only send the packed body when it really is the smaller one.
+        keep = len(packed) < len(xml_binary)
+        print(lz77_log_line("response", len(xml_binary), len(packed), time.perf_counter() - started, sent=keep))
+        if keep:
+            response_headers["X-Compress"] = "lz77"
+            response = packed
 
 
     if request.is_encrypted:

@@ -105,6 +105,93 @@ def count_play(game_profile, today=None, now=None):
     return True
 
 
+# ARENA BATTLE. Three places carry it (soundvoltex.dll, the same in EXCEED GEAR and NABLA):
+#   sv_common  arena{season s32, rule s32 (0..2), rank_match_target s32[] (each 0..2),
+#                    time_start time_end shop_start shop_end u64 in ms, is_open is_shop bool,
+#                    catalog*{catalog_id catalog_type price item_type item_id param s32}}
+#              (parser sub_180125BF0) - without the node the game has no season and ARENA stays shut
+#   sv_load    arena{last_play_season rank_point shop_point ultimate_rate ultimate_rank_num
+#                    rank_play_cnt ultimate_play_cnt megamix_rate s32}
+#   sv_save    arena{season, earned_rank_point earned_shop_point earned_ultimate_rate
+#                    earned_megamix_rate s32, rank_play ultimate_play bool}  (writer sub_180324B10),
+#              only sent after an arena credit; the game works the point changes out itself
+#              (Arena::*FluctuationCalculator), the server adds them up.
+# Opponents are found through sv_entry_s like any other match, there is no separate module.
+# What the rule numbers mean is not confirmed; rank_match_target lists the rules a rank match may use.
+ARENA_SEASON = 1
+ARENA_RULE = 0
+ARENA_RANK_MATCH_RULES = [0, 1, 2]
+ARENA_OPEN = (1640995200, 2145884400)  # 2022-01-01 .. 2037-12-31, seconds (the game keeps 32 bits)
+ARENA_SHOP_OPEN = ARENA_OPEN
+
+
+def arena_season_node():
+    return E.arena(
+        E.season(ARENA_SEASON, __type="s32"),
+        E.rule(ARENA_RULE, __type="s32"),
+        E.rank_match_target(ARENA_RANK_MATCH_RULES, __type="s32"),
+        E.time_start(ARENA_OPEN[0] * 1000, __type="u64"),
+        E.time_end(ARENA_OPEN[1] * 1000, __type="u64"),
+        E.shop_start(ARENA_SHOP_OPEN[0] * 1000, __type="u64"),
+        E.shop_end(ARENA_SHOP_OPEN[1] * 1000, __type="u64"),
+        E.is_open(1, __type="bool"),
+        E.is_shop(1, __type="bool"),
+    )
+
+
+def arena_rank_of(sdvx_id, game_version, ultimate_rate):
+    """Place among the players who have played ULTIMATE matches this season, 0 without any."""
+    if ultimate_rate <= 0:
+        return 0
+    better = 0
+    for card in get_db().table("sdvx_profile").all():
+        if card.get("sdvx_id") == sdvx_id:
+            continue
+        other = card.get("version", {}).get(str(game_version), {}).get("arena", {})
+        if other.get("last_play_season") == ARENA_SEASON and other.get("ultimate_rate", 0) > ultimate_rate:
+            better += 1
+    return better + 1
+
+
+def arena_profile_node(game_profile, sdvx_id, game_version):
+    arena = game_profile.get("arena", {})
+    this_season = arena.get("last_play_season") == ARENA_SEASON
+    rate = arena.get("ultimate_rate", 0) if this_season else 0
+    return E.arena(
+        E.last_play_season(arena.get("last_play_season", 0), __type="s32"),
+        E.rank_point(arena.get("rank_point", 0) if this_season else 0, __type="s32"),
+        E.shop_point(arena.get("shop_point", 0), __type="s32"),
+        E.ultimate_rate(rate, __type="s32"),
+        E.ultimate_rank_num(arena_rank_of(sdvx_id, game_version, rate), __type="s32"),
+        E.rank_play_cnt(arena.get("rank_play_cnt", 0) if this_season else 0, __type="s32"),
+        E.ultimate_play_cnt(arena.get("ultimate_play_cnt", 0) if this_season else 0, __type="s32"),
+        E.megamix_rate(arena.get("megamix_rate", 0), __type="s32"),
+    )
+
+
+def save_arena(game_profile, node):
+    """Add up what the game earned in an arena credit. Rank and rate belong to a season, shop points stay."""
+    if node is None:
+        return
+
+    def number(name):
+        text = node.findtext(name)
+        return int(text) if text not in (None, "") else 0
+
+    arena = game_profile.setdefault("arena", {})
+    season = number("season") or ARENA_SEASON
+    if arena.get("last_play_season") != season:
+        for k in ("rank_point", "ultimate_rate", "rank_play_cnt", "ultimate_play_cnt"):
+            arena[k] = 0
+    arena["last_play_season"] = season
+    arena["rank_point"] = max(0, arena.get("rank_point", 0) + number("earned_rank_point"))
+    arena["shop_point"] = max(0, arena.get("shop_point", 0) + number("earned_shop_point"))
+    arena["ultimate_rate"] = max(0, arena.get("ultimate_rate", 0) + number("earned_ultimate_rate"))
+    arena["megamix_rate"] = max(0, arena.get("megamix_rate", 0) + number("earned_megamix_rate"))
+    arena["rank_play_cnt"] = arena.get("rank_play_cnt", 0) + (1 if number("rank_play") else 0)
+    arena["ultimate_play_cnt"] = arena.get("ultimate_play_cnt", 0) + (1 if number("ultimate_play") else 0)
+
+
 def get_id_from_profile(cid):
     profile = get_db().table("sdvx_profile").get(where("card") == cid)
 
@@ -232,6 +319,7 @@ async def game_sv_common(ver: str, request: Request):
                     for s in unlock
                 ],
             ),
+            arena_season_node(),
         )
     )
 
@@ -415,15 +503,7 @@ async def game_sv_load(ver: str, request: Request):
                     E.ticket_num(0, __type="s32"),
                     E.limit_date(1605871200, __type="u64"),
                 ),
-                E.arena(
-                    E.last_play_season(0, __type="s32"),
-                    E.rank_point(0, __type="s32"),
-                    E.shop_point(0, __type="s32"),
-                    E.ultimate_rate(0, __type="s32"),
-                    E.ultimate_rank_num(0, __type="s32"),
-                    E.rank_play_cnt(0, __type="s32"),
-                    E.ultimate_play_cnt(0, __type="s32"),
-                ),
+                arena_profile_node(profile, djid, game_version),
                 E.hispeed(profile["hispeed"], __type="s32"),
                 E.lanespeed(profile["lanespeed"], __type="u32"),
                 E.gauge_option(profile["gauge_option"], __type="u8"),
@@ -651,7 +731,8 @@ async def game_sv_save(ver: str, request: Request):
 
     game_profile["params"] = params_list
 
-    count_play(game_profile)
+    if count_play(game_profile):  # not the same credit sent twice
+        save_arena(game_profile, root.find("arena"))
 
     profile["version"][str(game_version)] = game_profile
 

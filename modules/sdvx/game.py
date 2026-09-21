@@ -24,8 +24,17 @@ def get_profile(cid):
 
 def get_game_profile(cid, game_version):
     profile = get_profile(cid)
+    if profile is None:
+        return None  # a card this game has never seen: the game registers it with sv_new
 
     return profile["version"].get(str(game_version), None)
+
+
+def player_card(root):
+    # The player record is keyed by the card number. The game sends it as refid and, since
+    # cardmng hands the same value out as dataid, as dataid too - but refid is the one that is
+    # always the card (cardmng.bindmodel used to answer dataid 1), so it goes first.
+    return root.findtext("refid") or root.findtext("dataid")
 
 
 def get_id_from_profile(cid):
@@ -169,7 +178,7 @@ async def game_sv_new(ver: str, request: Request):
 
     root = request_info["root"][0]
 
-    dataid = root.find("dataid").text
+    dataid = player_card(root)
     cardno = root.find("cardno").text
     name = root.find("name").text
 
@@ -240,7 +249,7 @@ async def game_sv_load(ver: str, request: Request):
     request_info = await core_process_request(request)
     game_version = request_info["game_version"]
 
-    dataid = request_info["root"][0].find("dataid").text
+    dataid = player_card(request_info["root"][0])
     profile = get_game_profile(dataid, game_version)
 
     if profile:
@@ -603,7 +612,7 @@ async def game_sv_save_m(ver: str, request: Request):
 
     root = request_info["root"][0]
 
-    dataid = root.find("dataid").text
+    dataid = player_card(root)
     profile = get_game_profile(dataid, game_version)
     djid, djid_split = get_id_from_profile(dataid)
 

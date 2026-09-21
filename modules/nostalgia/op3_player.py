@@ -122,8 +122,11 @@ async def op3_player_regist_playdata(request: Request):
 
     root = request_info["root"][0]
 
-    dataid = root.find("dataid").text
     refid = root.find("refid").text
+    # The profile is keyed by the card number, which is what every later request sends as refid.
+    # dataid is the same value as long as cardmng hands it out; when bindmodel still answered
+    # dataid 1, profiles ended up under a card "1" that get_playdata never looked at.
+    dataid = refid or root.find("dataid").text
     name = root.find("name").text
 
     db = get_db().table("nostalgia_profile")

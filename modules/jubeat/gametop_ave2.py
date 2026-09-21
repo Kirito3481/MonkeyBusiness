@@ -7,7 +7,7 @@ from fastapi import APIRouter, Request, Response
 from core_common import core_process_request, core_prepare_response, E
 from core_database import get_db
 from modules.jubeat.fcchallenge_ave2 import fc_challenge_refresh
-from modules.jubeat.shopinfo_ave2 import jubeat_ave2_global_info
+from modules.jubeat.shopinfo_ave2 import LIGHTCHAT_MAPS, jubeat_ave2_global_info
 
 router = APIRouter(prefix="/local", tags=["local"])
 router.model_whitelist = ["L44"]
@@ -170,10 +170,22 @@ def _lightchat_node(lc):
             for k, v in sorted(entries.items(), key=lambda kv: int(kv[0]))
         ]
 
+    # every map / event / section shopinfo defines, also what the player has not reached yet (see LIGHTCHAT_MAPS):
+    # a copy with empty entries added, the stored progress itself is left alone
+    known = {k: dict(v, events={e: dict(ev, sections=dict(ev.get("sections", {}))) for e, ev in v.get("events", {}).items()})
+             for k, v in lc["maps"].items()}
+    for defined_map, events in LIGHTCHAT_MAPS.items():
+        entry = known.setdefault(str(defined_map), {"events": {}})
+        for defined_event, (_event_type, defined_sections) in events.items():
+            event = entry["events"].setdefault(str(defined_event), {"sections": {}})
+            for section_id, *_ in defined_sections:
+                event["sections"].setdefault(str(section_id), {})
+
     maps = []
-    for map_id, m in sorted(lc["maps"].items(), key=lambda kv: int(kv[0])):
+    for map_id, m in sorted(known.items(), key=lambda kv: int(kv[0])):
         events = []
         for event_id, ev in sorted(m.get("events", {}).items(), key=lambda kv: int(kv[0])):
+            stored_sections = dict(ev.get("sections", {}))
             sections = [
                 E.section(
                     E.acquired_jwatt(sec.get("acquired_jwatt", 0), __type="s32"),
@@ -181,7 +193,7 @@ def _lightchat_node(lc):
                     E.mission_list(*progress_nodes("mission", sec.get("missions", {}))),
                     id=str(section_id),
                 )
-                for section_id, sec in sorted(ev.get("sections", {}).items(), key=lambda kv: int(kv[0]))
+                for section_id, sec in sorted(stored_sections.items(), key=lambda kv: int(kv[0]))
             ]
             events.append(
                 E.event(

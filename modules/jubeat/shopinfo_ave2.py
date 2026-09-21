@@ -6,6 +6,29 @@ from fastapi import APIRouter, Request, Response
 from core_common import core_process_request, core_prepare_response, E
 from modules.jubeat.musicdb_ave2 import ave2_newest_first
 
+# LIGHT CHAT: map id -> event id -> (event type, sections (id, tube text, required jwatt, reward type, reward param,
+# dialogue)).
+# Event types (jubeat.dll sub_1007ADA0 @0x1007AE2A): 1 an ordinary chat, done for good once its sections are cleared;
+# 2 one with an end date shown; 3 the ENDLESS chat: when a section of it is cleared the game takes the reward and puts
+# acquired_jwatt back to 0 by itself (0x1010D126), so it never ends - and the game NEEDS one: with no chat of type
+# 1 / 2 / 6 left it falls back to the first type 3 event, and without any it runs off the end of a list and dies
+# (the chat select crash of 2026-09-22). Map 99 (CONCIERGE) is always available whatever its conditions say.
+# Conditions (condition_list) only decide when an event unlocks; they do not repeat anything.
+EVENT_CHAT, EVENT_ENDLESS = 1, 3
+# Reward types (jubeat.dll: grant sub_100E8000, display sub_1017F3B0): 1 music (music id), 2 title, 3 marker,
+# 4 play background, 7 a whole bonus tune (param ignored), 9 jbox points, 11 BONUS TUNE GAUGE points (param = points
+# as they are, shown as "100 ten"; a bonus tune costs 1000), 13 emblem, 14 jwatt. The game adds the reward itself
+# and sends the result with the save (bonus_tune_points), the server only keeps what it is told.
+REWARD_MUSIC, REWARD_BONUS_TUNE_GAUGE = 1, 11
+# Map 21 is the welcome map with its single 10 jwatt section. On 2026-09-22 that section got cleared and from the next
+# credit on the game died when the music select came up (EXCEPTION thread-task.c:55): with map 21 done there was
+# nothing left to go to. Map 99 (the game calls it CONCIERGE) is what comes after it.
+# NOTE: once the last section of the last map is cleared there is again no map in progress.
+LIGHTCHAT_MAPS = {
+    21: {1: (EVENT_CHAT, [(1, "01BC00", 10, REWARD_MUSIC, 11000105, "jubeat beyond the Ave.へようこそ！")])},
+    99: {1: (EVENT_ENDLESS, [(1, "0E7640", 300, REWARD_BONUS_TUNE_GAUGE, 100, "こちらをどうぞ！")])},
+}
+
 router = APIRouter(prefix="/local", tags=["local"])
 router.model_whitelist = ["L44"]
 
@@ -145,32 +168,41 @@ def jubeat_ave2_global_info():
         *_sync_wait_nodes(),
         E.lightchat(
             E.map_list(
-                E.map(
-                    E.event_list(
-                        E.event(
-                            E.event_type(1, __type="s32"),
-                            E.stime(0, __type="u64"),
-                            E.etime(0, __type="u64"),
-                            E.is_open(True, __type="bool"),
-                            E.hint("HINT", __type="str"),
-                            E.unlock_text("UNLOCK TEXT", __type="str"),
-                            E.condition_list(),
-                            E.section_list(
-                                E.section(
-                                    E.tube_text("01BC00", __type="str"),
-                                    E.required_jwatt(10, __type="s32"),
-                                    E.reward_type(1, __type="s32"),
-                                    E.reward_param(11000105, __type="s32"),
-                                    E.dialogue("jubeat beyond the Ave.へようこそ！", __type="str"),
-                                    E.mission_list(),
-                                    id="1",
-                                ),
-                            ),
-                            id="1",
+                *[
+                    E.map(
+                        E.event_list(
+                            *[
+                                E.event(
+                                    E.event_type(event_type, __type="s32"),
+                                    E.stime(0, __type="u64"),
+                                    E.etime(0, __type="u64"),
+                                    E.is_open(True, __type="bool"),
+                                    E.hint("HINT", __type="str"),
+                                    E.unlock_text("UNLOCK TEXT", __type="str"),
+                                    E.condition_list(),
+                                    E.section_list(
+                                        *[
+                                            E.section(
+                                                E.tube_text(tube_text, __type="str"),
+                                                E.required_jwatt(required_jwatt, __type="s32"),
+                                                E.reward_type(reward_type, __type="s32"),
+                                                E.reward_param(reward_param, __type="s32"),
+                                                E.dialogue(dialogue, __type="str"),
+                                                E.mission_list(),
+                                                id=str(section_id),
+                                            )
+                                            for section_id, tube_text, required_jwatt, reward_type, reward_param, dialogue in sections
+                                        ],
+                                    ),
+                                    id=str(event_id),
+                                )
+                                for event_id, (event_type, sections) in events.items()
+                            ],
                         ),
-                    ),
-                    id="21",
-                ),
+                        id=str(map_id),
+                    )
+                    for map_id, events in LIGHTCHAT_MAPS.items()
+                ],
             ),
         ),
     )

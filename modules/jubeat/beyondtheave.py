@@ -90,3 +90,13 @@ async def demodata_ave2_get_hitchart(request: Request):
 @router.post("/{gameinfo}/logger_ave2/report")
 async def logger_ave2_report(request: Request):
     return await game.logger_report(request)
+
+
+@router.post("/{gameinfo}/jbox_ave2/get_list")
+async def jbox_ave2_get_list(request: Request):
+    return await game.jbox_get_list(request)
+
+
+@router.post("/{gameinfo}/jbox_ave2/get_agreement")
+async def jbox_ave2_get_agreement(request: Request):
+    return await game.jbox_get_agreement(request)

@@ -1869,3 +1869,44 @@ class JubeatGame:
 
         response_body, response_headers = await core_prepare_response(request, response)
         return Response(content=response_body, headers=response_headers)
+
+    # jbox_ave2: the JBOX, emblem boxes bought with PASELI (menu on the mode select). From jubeat.dll, module table
+    # off_102E95E8 = (request builder / response reader) per method, all on the service "local":
+    #   get_list       sub_1016DCE0 / sub_1016E350 + sub_1017CC70   req: data/player/jid(s32)
+    #   confirm        sub_1016D830 / sub_1016D980   req: data/player{jid jbox@id}   res: transaction_id(str) insert_date(s64)
+    #   buy            sub_1016D320 / sub_1016D440   req: data/player{jid jbox@transaction_id jbox/insert_date(s64)}
+    #                                                res: emblem_list/emblem@index (the pieces won)
+    #   get_image      sub_1016E080 / sub_1016E0E0   the pictures of a selection, cached under /dev/raw
+    #   get_agreement  sub_1016DCE0 / sub_1016DDC0   req: data/player/jid(s32)   res: is_agreement(bool)
+    #   set_agreement  sub_1016E700                  req: data/player{jid is_agreement(bool)}
+    # What the game reads from get_list (up to 4 selections of up to 6 targets):
+    #   selection_list/selection@id{name(str, up to 36) image_id(s32) etime(s64)
+    #       target_list/target@id@status{appearlist emblemlist definedlist (s32 x96: 3072 bit flags of emblem pieces)
+    #                                    rarity rarity_special (s32 x5) is_defined(bool)}}
+    #   is_cache_clear(bool, optional)
+    # The boxes and their pictures come from KONAMI and there is no data for them here, so the list is empty. Only
+    # get_list and get_agreement are answered; the four others still get a 404.
+    async def jbox_get_list(self, request):
+        request_info = await core_process_request(request)
+
+        response = E.response(
+            E.jbox_ave2(
+                E.selection_list(),
+            )
+        )
+
+        response_body, response_headers = await core_prepare_response(request, response)
+        return Response(content=response_body, headers=response_headers)
+
+    # is_agreement 0 makes the game show the JBOX terms and call set_agreement (not implemented), so it is always 1.
+    async def jbox_get_agreement(self, request):
+        request_info = await core_process_request(request)
+
+        response = E.response(
+            E.jbox_ave2(
+                E.is_agreement(True, __type="bool"),
+            )
+        )
+
+        response_body, response_headers = await core_prepare_response(request, response)
+        return Response(content=response_body, headers=response_headers)

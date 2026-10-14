@@ -91,7 +91,7 @@ def format_profile(popn_id, profile, game_version):
 
     tutorial = profile["tutorial"]
     if tutorial < 0:
-        tutorial = 100 if profile["play_count"] > 1 else 0
+        tutorial = 100 if profile["play_count"] > 0 else 0
 
     items = []
     for key, item in profile["items"].items():
@@ -158,7 +158,8 @@ def format_profile(popn_id, profile, game_version):
                 E.license_data([-1] * 20, __type="s16"),
                 E.my_best(_pad(most_played, 20), __type="s16"),
                 E.latest_music(_pad(last_played, 10), __type="s16"),
-                E.total_play_cnt(profile["play_count"], __type="s16"),
+                # Include the current credit in the game's 1-based play count.
+                E.total_play_cnt(profile["play_count"] + 1, __type="s16"),
                 E.today_play_cnt(profile["today_play_cnt"], __type="s16"),
                 E.consecutive_days(profile["consecutive_days"], __type="s16"),
                 E.total_days(profile["total_days"], __type="s16"),

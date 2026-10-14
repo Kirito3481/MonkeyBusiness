@@ -1,7 +1,8 @@
 """jubeat: what every version shares. The versions themselves are files of their own (beyondtheave.py and
-beyondtheave_lobby.py for beyond the Ave): each owns a router, its routes and its settings and hands the requests
-to a JubeatGame. This file has no router and no public coroutine on purpose: modules/__init__.py runs every file of
-this folder as a nameless module and would register them a second time."""
+beyondtheave_lobby.py for beyond the Ave; festo.py, festo_lobby.py and festo_lab.py for festo): each owns a router,
+its routes and its settings and hands the requests to a JubeatGame - or to a subclass of it that answers what the
+version does differently (JubeatFestoGame). This file has no router and no public coroutine on purpose:
+modules/__init__.py runs every file of this folder as a nameless module and would register them a second time."""
 import datetime
 import json
 import os
@@ -17,35 +18,45 @@ from fastapi import Response
 # ====================================================================================================
 # song data  (was musicdb_ave2.py)
 # ====================================================================================================
-# Song data of jubeat beyond the Ave for the modules that need more than a music id.
+# Song data of a game version for the modules that need more than a music id.
 #
-# data/12/music_db.json is made from the game's music_info.xml by jubeat_l44_music_db.py:
+# data/<game version>/music_db.json (10 = festo, 12 = beyond the Ave) is made from the game's music_info.xml by
+# jubeat_l44_music_db.py:
 #     {"<music id>": [debut version, 1 = KONAMI original / 0 = licensed, level bsc, adv, ext]}
 # Without the file every list here is empty and the features built on it stay empty too.
 
-try:
-    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "12", "music_db.json"), encoding="utf-8") as _f:
-        JUBEAT_AVE2_MUSIC = {int(music_id): song for music_id, song in json.load(_f).items()}
-except (OSError, ValueError):
-    JUBEAT_AVE2_MUSIC = {}
+_music_db_cache = {}  # game_version -> {music_id: song}
+
+
+def music_db(game_version):
+    """{music id: [debut, original, level bsc, adv, ext]} of a game version, read once from data/<game version>/."""
+    songs = _music_db_cache.get(game_version)
+    if songs is None:
+        try:
+            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", str(game_version), "music_db.json"), encoding="utf-8") as f:
+                songs = {int(music_id): song for music_id, song in json.load(f).items()}
+        except (OSError, ValueError):
+            songs = {}
+        _music_db_cache[game_version] = songs
+    return songs
 
 PLAY_COUNT_CACHE_SECONDS = 600
 NEW_PLAYER_LEVEL = 3.0  # chart level assumed for somebody without any history
 _play_count_cache = {}  # game_version -> (time, {music_id: plays})
 
 
-def ave2_newest_first(original=None):
+def ave2_newest_first(game_version, original=None):
     """Music ids, newest version first; original=True/False keeps only originals / licensed songs."""
     songs = [
         (song[0], music_id)
-        for music_id, song in JUBEAT_AVE2_MUSIC.items()
+        for music_id, song in music_db(game_version).items()
         if original is None or bool(song[1]) == original
     ]
     return [music_id for _, music_id in sorted(songs, reverse=True)]
 
 
-def ave2_level(music_id, seq):
-    song = JUBEAT_AVE2_MUSIC.get(music_id)
+def ave2_level(game_version, music_id, seq):
+    song = music_db(game_version).get(music_id)
     return song[2 + seq] if song is not None and 0 <= seq <= 2 else 0.0
 
 
@@ -54,7 +65,7 @@ def ave2_player_history(jid, game_version):
     if not jid:
         return []
     rows = get_db().table("jubeat_scores_best").search((where("jubeat_id") == int(jid)) & (where("game_version") == game_version))
-    return [row for row in rows if row.get("music_id") in JUBEAT_AVE2_MUSIC and row.get("seq") in (0, 1, 2)]
+    return [row for row in rows if row.get("music_id") in music_db(game_version) and row.get("seq") in (0, 1, 2)]
 
 
 def ave2_player_level(jid, game_version, played=(), history=None):
@@ -62,8 +73,8 @@ def ave2_player_level(jid, game_version, played=(), history=None):
     if history is None:
         history = ave2_player_history(jid, game_version)
     recent = sorted(history, key=lambda row: row.get("timestamp", 0))[-10:]
-    charts = [(m, s) for m, s in played if m in JUBEAT_AVE2_MUSIC and s in (0, 1, 2)] or [(row["music_id"], row["seq"]) for row in recent]
-    levels = [ave2_level(m, s) for m, s in charts if ave2_level(m, s) > 0]
+    charts = [(m, s) for m, s in played if m in music_db(game_version) and s in (0, 1, 2)] or [(row["music_id"], row["seq"]) for row in recent]
+    levels = [ave2_level(game_version, m, s) for m, s in charts if ave2_level(game_version, m, s) > 0]
     return (statistics.median(levels) if levels else NEW_PLAYER_LEVEL), (charts[-1][1] if charts else 0)
 
 
@@ -99,7 +110,7 @@ def ave2_play_counts(game_version):
 #   gameend sends fc_challenge/today{music_id} and fc_challenge/whim{music_id, state}, each only
 #   when that song was played in the credit. The state of "today" does not come back, so it is
 #   worked out here from the tune results.
-# Both songs change at midnight (server time). Needs data/12/music_db.json, without it the
+# Both songs change at midnight (server time). Needs data/<game version>/music_db.json, without it the
 # challenge stays off (music_id 0).
 
 FCC_WHIM_LEVEL_RANGE = 1.0  # the personal song has a chart within +- this of the level the player plays
@@ -110,9 +121,9 @@ STATE_PLAYED = 0x40
 STATE_COMPLETED = 0x80
 
 
-def fc_challenge_today(today=None):
+def fc_challenge_today(game_version, today=None):
     """Today's challenge song, the same for every player."""
-    songs = sorted(JUBEAT_AVE2_MUSIC)
+    songs = sorted(music_db(game_version))
     if not songs:
         return 0
     return random.Random(f"fcc-today-{today or time.strftime('%Y%m%d')}").choice(songs)
@@ -122,9 +133,9 @@ def _whim(jid, game_version, today, avoid):
     level, _ = ave2_player_level(jid, game_version)
     songs = [
         music_id
-        for music_id in sorted(JUBEAT_AVE2_MUSIC)
-        if music_id != avoid and any(abs(ave2_level(music_id, seq) - level) <= FCC_WHIM_LEVEL_RANGE for seq in (0, 1, 2))
-    ] or [music_id for music_id in sorted(JUBEAT_AVE2_MUSIC) if music_id != avoid]
+        for music_id in sorted(music_db(game_version))
+        if music_id != avoid and any(abs(ave2_level(game_version, music_id, seq) - level) <= FCC_WHIM_LEVEL_RANGE for seq in (0, 1, 2))
+    ] or [music_id for music_id in sorted(music_db(game_version)) if music_id != avoid]
     return random.Random(f"fcc-whim-{today}-{jid}").choice(songs) if songs else 0
 
 
@@ -134,7 +145,7 @@ def fc_challenge_refresh(profile, jid, game_version, today=None):
     current = profile.get("fc_challenge")
     if isinstance(current, dict) and current.get("date") == today:
         return False
-    music_id = fc_challenge_today(today)
+    music_id = fc_challenge_today(game_version, today)
     profile["fc_challenge"] = {
         "date": today,
         "today": {"music_id": music_id, "state": 0},
@@ -252,23 +263,23 @@ SYNC_RESULT_WAIT_SECONDS = None  # waiting for everybody's final result (result_
 # that there are weekly songs, and playing one multiplies the result bonus by 1.2 instead of 1.0
 # (a challenge / bonus song gets 1.4). The game stores `value` but never reads it; it carries the
 # week here. A new set every Monday (server time), the same for everybody, half licensed songs
-# and half KONAMI originals. Needs data/12/music_db.json, without it the list stays empty.
+# and half KONAMI originals. Needs data/<game version>/music_db.json, without it the list stays empty.
 WEEKLY_MUSIC_COUNT = 10
 
 
-def weekly_music(day=None):
+def weekly_music(game_version, day=None):
     """(week number yyyyww, [music ids]) of the ISO week `day` (a datetime.date, default today) is in."""
     year, week, _ = (day or datetime.date.today()).isocalendar()
     rng = random.Random(f"weekly-{year}-{week}")
-    licensed, original = ave2_newest_first(False), ave2_newest_first(True)
+    licensed, original = ave2_newest_first(game_version, False), ave2_newest_first(game_version, True)
     half = WEEKLY_MUSIC_COUNT // 2
     picks = rng.sample(licensed, min(half, len(licensed)))
     picks += rng.sample(original, min(WEEKLY_MUSIC_COUNT - len(picks), len(original)))
     return year * 100 + week, sorted(picks)
 
 
-def _weekly_music_node():
-    week, music_ids = weekly_music()
+def _weekly_music_node(game_version):
+    week, music_ids = weekly_music(game_version)
     return E.weekly_music(
         E.value(week, __type="s32"),
         E.music_list(*[E.music(id=str(music_id)) for music_id in music_ids]),
@@ -286,7 +297,7 @@ def _sync_wait_nodes():
     ]
 
 
-def jubeat_ave2_global_info(lightchat_maps):
+def jubeat_ave2_global_info(lightchat_maps, game_version):
     # Shared <info> node used by shopinfo_ave2.regist and gametop_ave2.get_info.
     no_bits = [0] * 64
 
@@ -295,7 +306,7 @@ def jubeat_ave2_global_info(lightchat_maps):
         E.share_music(),
         E.genre_def_music(*genre_def_music_nodes()),  # Category Select Screen Default Music List
         E.black_jacket_list(no_bits, __type="s32"),  # Music Jacket Censorship
-        _weekly_music_node(),
+        _weekly_music_node(game_version),
         E.white_music_list(WHITE_MUSIC_LIST, __type="s32"),  # Playable Music List
         E.white_marker_list([-1, 127231] + [0] * 14, __type="s32"),  # Allowed Marker List
         E.white_theme_list([7295] + [0] * 15, __type="s32"),  # Allowed Background List
@@ -378,6 +389,17 @@ def get_game_profile(cid, game_version):
         return None
 
     return merge_defaults(new_game_profile(game_version, stored.get("name", "")), stored)
+
+
+def start_version_profile(card, game_version):
+    """A fresh profile of game_version for a card that so far has profiles of other versions only. The name comes
+    along from the newest of them, nothing else (scores stay with their version). Saved; returns the profile."""
+    newest = card["version"][max(card["version"], key=int)]
+    profile = new_game_profile(game_version, newest.get("name", ""))
+    fc_challenge_refresh(profile, card["jubeat_id"], game_version)
+    card["version"][str(game_version)] = profile
+    get_db().table("jubeat_profile").upsert(card, where("card") == card["card"])
+    return profile
 
 
 def merge_defaults(defaults, stored):
@@ -574,7 +596,7 @@ def _fill_in_node(tag, cat):
     )
 
 
-def format_profile(jid, profile, lightchat_maps):
+def format_profile(game, game_version, jid, profile):
     last = profile["last"]
     item = profile["item"]
     fill = profile["fill_in_category"]
@@ -584,9 +606,10 @@ def format_profile(jid, profile, lightchat_maps):
     fcc = profile.get("fc_challenge") or {"today": {"music_id": 0, "state": 0}, "whim": {"music_id": 0, "state": 0}}
 
     return E.response(
-        E.gametop_ave2(
+        game.module(
+            "gametop",
             E.data(
-                jubeat_ave2_global_info(lightchat_maps),
+                game.global_info(game_version),
                 E.player(
                     E.jid(jid, __type="s32"),
                     E.session_id(1, __type="s32"),
@@ -662,7 +685,7 @@ def format_profile(jid, profile, lightchat_maps):
                     E.free_first_play(
                         E.is_available(0, __type="bool"),
                     ),
-                    E.event_info(),
+                    E.event_info(*game.player_event_nodes(profile)),
                     E.jbox(
                         E.point(jbox["point"], __type="s32"),
                         E.emblem(
@@ -685,7 +708,7 @@ def format_profile(jid, profile, lightchat_maps):
                         _fill_in_node("normal", fill["normal"]),
                         _fill_in_node("hard", fill["hard"]),
                     ),
-                    _lightchat_node(profile["lightchat"], lightchat_maps),
+                    *game.player_nodes(profile),
                 ),
             ),
         )
@@ -716,7 +739,7 @@ def _mode_node(tag, charts):
     )
 
 
-def format_scores(jid, game_version, partition):
+def format_scores(game, jid, game_version, partition):
     rows = get_db().table("jubeat_scores_best").search(
         (where("jubeat_id") == int(jid)) & (where("game_version") == game_version)
     )
@@ -742,7 +765,8 @@ def format_scores(jid, game_version, partition):
         musicdata.append(E.musicdata(*children, music_id=str(mid)))
 
     return E.response(
-        E.gametop_ave2(
+        game.module(
+            "gametop",
             E.data(
                 E.player(
                     E.jid(int(jid), __type="s32"),
@@ -900,8 +924,6 @@ def update_profile_from_regist(profile, info, player):
 
     if player.find("navi/flag") is not None:
         profile["navi_flag"] = _int(player, "navi/flag", profile["navi_flag"])
-
-    update_lightchat(profile, player.find("lightchat"))
 
     return profile
 
@@ -1082,9 +1104,9 @@ RECOMMEND_LEVEL_RANGE_HIGH = 0.5
 CLEAR_FLAG_CLEARED = 2
 
 
-def _closest_chart(music_id, level, preferred_seq):
+def _closest_chart(game_version, music_id, level, preferred_seq):
     """The chart of a song whose level is closest to `level` (the preferred chart wins a tie)."""
-    charts = [(abs(ave2_level(music_id, seq) - level), seq != preferred_seq, seq) for seq in (0, 1, 2) if ave2_level(music_id, seq) > 0]
+    charts = [(abs(ave2_level(game_version, music_id, seq) - level), seq != preferred_seq, seq) for seq in (0, 1, 2) if ave2_level(game_version, music_id, seq) > 0]
     return min(charts)[2] if charts else preferred_seq
 
 
@@ -1103,12 +1125,12 @@ def recommend(game_version, jid, played, today=None):
     picks = []
 
     def add(music_id, chart):
-        if len(picks) < RECOMMEND_SIZE and music_id in JUBEAT_AVE2_MUSIC and music_id not in this_credit and all(music_id != m for m, _ in picks):
+        if len(picks) < RECOMMEND_SIZE and music_id in music_db(game_version) and music_id not in this_credit and all(music_id != m for m, _ in picks):
             picks.append((music_id, chart))
 
     # 1) try again: not cleared yet, then the lowest scores; a different handful every day
     retry = sorted(
-        (row for row in history if abs(ave2_level(row["music_id"], row["seq"]) - level) <= 1.5),
+        (row for row in history if abs(ave2_level(game_version, row["music_id"], row["seq"]) - level) <= 1.5),
         key=lambda row: (bool(row.get("clear", 0) & CLEAR_FLAG_CLEARED), row.get("score", 0)),
     )[:10]
     for row in rng.sample(retry, min(RECOMMEND_RETRY, len(retry))):
@@ -1118,23 +1140,23 @@ def recommend(game_version, jid, played, today=None):
     plays = ave2_play_counts(game_version)
     popular = [m for m in sorted(plays, key=lambda m: -plays[m]) if m not in known and plays[m] > 0]
     for music_id in popular[:RECOMMEND_POPULAR]:
-        add(music_id, _closest_chart(music_id, level, seq))
+        add(music_id, _closest_chart(game_version, music_id, level, seq))
 
     # 3) new to the player, around the level they play
     around = []
-    for music_id in JUBEAT_AVE2_MUSIC:
+    for music_id in music_db(game_version):
         if music_id in known:
             continue
-        chart = _closest_chart(music_id, level, seq)
-        if abs(ave2_level(music_id, chart) - level) <= (RECOMMEND_LEVEL_RANGE_HIGH if level >= 9 else RECOMMEND_LEVEL_RANGE):
+        chart = _closest_chart(game_version, music_id, level, seq)
+        if abs(ave2_level(game_version, music_id, chart) - level) <= (RECOMMEND_LEVEL_RANGE_HIGH if level >= 9 else RECOMMEND_LEVEL_RANGE):
             around.append((music_id, chart))
     rng.shuffle(around)
     for music_id, chart in around:
         add(music_id, chart)
 
     # 4) still room (tiny song list, player who has played everything): the newest songs
-    for music_id in ave2_newest_first():
-        add(music_id, _closest_chart(music_id, level, seq))
+    for music_id in ave2_newest_first(game_version):
+        add(music_id, _closest_chart(game_version, music_id, level, seq))
     return picks
 
 
@@ -1154,13 +1176,13 @@ HITCHART_SIZE = 10
 def hitchart(game_version):
     """Top songs by play count over every player; ranks nobody played yet go to the newest songs.
 
-    Which songs are licensed / KONAMI originals comes from data/12/music_db.json;
+    Which songs are licensed / KONAMI originals comes from data/<game version>/music_db.json;
     without that file the hit chart stays empty.
     """
     plays = ave2_play_counts(game_version)  # cached for a few minutes
     charts = {}
     for kind, original in (("licensed", False), ("original", True)):
-        newest_first = ave2_newest_first(original)
+        newest_first = ave2_newest_first(game_version, original)
         age = {music_id: index for index, music_id in enumerate(newest_first)}
         played = sorted((m for m in plays if m in age and plays[m] > 0), key=lambda m: (-plays[m], age[m]))
         charts[kind] = (played + [m for m in newest_first if m not in plays])[:HITCHART_SIZE]
@@ -1322,34 +1344,26 @@ def _music_node(mid, seq):
 
 
 def _master_response(room):
-    return E.response(
-        E.lobby_ave2(
-            E.data(
-                E.roomid(room["roomid"], __type="s64", master="1"),
-                E.refresh_intr(LOBBY_REFRESH_INTR, __type="s16"),
-                _music_node(room["mid"], room["seq"]),
-                E.random_seed(room["random_seed"], __type="u32"),
-            ),
-        )
+    return E.data(
+        E.roomid(room["roomid"], __type="s64", master="1"),
+        E.refresh_intr(LOBBY_REFRESH_INTR, __type="s16"),
+        _music_node(room["mid"], room["seq"]),
+        E.random_seed(room["random_seed"], __type="u32"),
     )
 
 
 def _guest_response(room, music=None):
     # music: (id, seq) the guest plays instead of the room's song
     mid, seq = music or (room["mid"], room["seq"])
-    return E.response(
-        E.lobby_ave2(
-            E.data(
-                E.roomid(room["roomid"], __type="s64", master="0"),
-                E.connect(
-                    E.key(room["key"], __type="u8"),
-                    E("global", room["global"], __type="str"),
-                    E.private(room["private"], __type="str"),
-                ),
-                _music_node(mid, seq),
-                E.random_seed(room["random_seed"], __type="u32"),
-            ),
-        )
+    return E.data(
+        E.roomid(room["roomid"], __type="s64", master="0"),
+        E.connect(
+            E.key(room["key"], __type="u8"),
+            E("global", room["global"], __type="str"),
+            E.private(room["private"], __type="str"),
+        ),
+        _music_node(mid, seq),
+        E.random_seed(room["random_seed"], __type="u32"),
     )
 
 
@@ -1366,21 +1380,17 @@ def lobby_check(pcbid, game_version):
         k = (room["mid"], room["seq"])
         waiting[k] = waiting.get(k, 0) + 1
 
-    return E.response(
-        E.lobby_ave2(
-            E.data(
-                E.entrant_nr(len(open_rooms), __type="u32", time=str(now)),
-                E.interval(LOBBY_CHECK_INTERVAL, __type="s16"),
-                E.entry_timeout(max(LOBBY_MAX_WAIT, LOBBY_ENTRY_TIMEOUT), __type="s16"),
-                E.waitlist(
-                    *[
-                        E.music(min(count, 255), __type="u8", id=str(mid), seq=str(seq))
-                        for (mid, seq), count in waiting.items()
-                    ],
-                    count=str(len(waiting)),
-                ),
-            ),
-        )
+    return E.data(
+        E.entrant_nr(len(open_rooms), __type="u32", time=str(now)),
+        E.interval(LOBBY_CHECK_INTERVAL, __type="s16"),
+        E.entry_timeout(max(LOBBY_MAX_WAIT, LOBBY_ENTRY_TIMEOUT), __type="s16"),
+        E.waitlist(
+            *[
+                E.music(min(count, 255), __type="u8", id=str(mid), seq=str(seq))
+                for (mid, seq), count in waiting.items()
+            ],
+            count=str(len(waiting)),
+        ),
     )
 
 
@@ -1498,13 +1508,9 @@ def lobby_refresh(pcbid, data):
         if time.time() >= room["start_at"]:
             room["started"] = start = True
 
-    return E.response(
-        E.lobby_ave2(
-            E.data(
-                E.refresh_intr(LOBBY_REFRESH_INTR, __type="s16"),
-                E.start(start, __type="bool"),
-            ),
-        )
+    return E.data(
+        E.refresh_intr(LOBBY_REFRESH_INTR, __type="s16"),
+        E.start(start, __type="bool"),
     )
 
 
@@ -1514,12 +1520,8 @@ def lobby_report(pcbid, data):
     if room is not None and room["owner"] == pcbid:
         del rooms[roomid]
 
-    return E.response(
-        E.lobby_ave2(
-            E.data(
-                E.refresh_intr(LOBBY_REFRESH_INTR, __type="s16"),
-            ),
-        )
+    return E.data(
+        E.refresh_intr(LOBBY_REFRESH_INTR, __type="s16"),
     )
 
 
@@ -1536,23 +1538,57 @@ def _pcbid(request_info):
 # the handlers
 # ====================================================================================================
 class JubeatGame:
-    """The handlers of one game version: <module>_<method> answers the request <module>_ave2.<method>."""
+    """The handlers of one game version: <module>_<method> answers the request <module>_<suffix>.<method>, where the
+    suffix is MODULE_SUFFIX ("ave2" for beyond the Ave, "" for festo whose modules have none).
 
-    def __init__(self, lightchat_maps):
+    What a version answers differently (its <info>, its own part of the player data) is a method below that its
+    subclass overrides: JubeatFestoGame in festo.py. Everything else is the same for every version."""
+
+    MODULE_SUFFIX = "ave2"
+
+    def __init__(self, lightchat_maps, module_suffix=None):
         self.lightchat_maps = lightchat_maps  # see beyondtheave.py
+        if module_suffix is not None:
+            self.MODULE_SUFFIX = module_suffix
+
+    def module(self, name, *children, **attributes):
+        """The root node of an answer: <name>_<suffix>, or <name> for a version without a suffix."""
+        return E(f"{name}_{self.MODULE_SUFFIX}" if self.MODULE_SUFFIX else name, *children, **attributes)
+
+    # ---- what a version answers differently; beyond the Ave's answers are the defaults ----
+    def global_info(self, game_version):
+        """The <info> node of shopinfo.regist, gametop.get_info and the player data."""
+        return jubeat_ave2_global_info(self.lightchat_maps, game_version)
+
+    def shop_nodes(self):
+        """Children of shopinfo.regist's data besides cabid, locationid, facility and info."""
+        return []
+
+    def player_event_nodes(self, profile):
+        """The children of the player data's event_info."""
+        return []
+
+    def player_nodes(self, profile):
+        """The version's own children of the player data, after the shared ones (format_profile)."""
+        return [_lightchat_node(profile["lightchat"], self.lightchat_maps)]
+
+    def save_player_nodes(self, profile, player):
+        """The version's own part of gameend.regist's data/player, into the profile (gameend_regist saves it)."""
+        update_lightchat(profile, player.find("lightchat"))
 
     async def shopinfo_regist(self, request):
         request_info = await core_process_request(request)
 
         response = E.response(
-            E.shopinfo_ave2(
+            self.module("shopinfo",
                 E.data(
                     E.cabid(1, __type="u32"),
                     E.locationid("EA000001", __type="str"),
                     E.facility(
                         E.exist(1, __type="u32"),
                     ),
-                    jubeat_ave2_global_info(self.lightchat_maps),
+                    *self.shop_nodes(),
+                    self.global_info(request_info["game_version"]),
                 ),
             )
         )
@@ -1564,9 +1600,9 @@ class JubeatGame:
         request_info = await core_process_request(request)
 
         response = E.response(
-            E.gametop_ave2(
+            self.module("gametop",
                 E.data(
-                    jubeat_ave2_global_info(self.lightchat_maps),
+                    self.global_info(request_info["game_version"]),
                 ),
             )
         )
@@ -1597,11 +1633,7 @@ class JubeatGame:
 
         db.upsert(all_profiles_for_card, where("card") == refid)
 
-        response = format_profile(
-            all_profiles_for_card["jubeat_id"],
-            all_profiles_for_card["version"][str(game_version)],
-            self.lightchat_maps,
-        )
+        response = format_profile(self, game_version, all_profiles_for_card["jubeat_id"], all_profiles_for_card["version"][str(game_version)])
 
         response_body, response_headers = await core_prepare_response(request, response)
         return Response(content=response_body, headers=response_headers)
@@ -1613,17 +1645,22 @@ class JubeatGame:
         refid = request_info["root"][0].find("data/player/refid").text
 
         profile = get_game_profile(refid, game_version)
+        card = get_profile(refid)
+        if profile is None and card is not None and card.get("version") and "jubeat_id" in card:
+            # The card has played another jubeat version: cardmng said it is registered, so the game expects its data
+            # here and takes 109 as an error ("eamuse_gametop_get_pdata failed!!(r=7)"); only a card the game has never
+            # seen goes to regist by itself. This version's profile starts now, with the name of the newest one.
+            profile = start_version_profile(card, game_version)
 
         if profile is None:
-            # 109 = NO_PROFILE, game falls back to gametop_ave2.regist
-            response = E.response(E.gametop_ave2(status=109))
+            # 109 = NO_PROFILE, game falls back to gametop.regist
+            response = E.response(self.module("gametop", status=109))
         else:
-            card = get_profile(refid)
             if fc_challenge_refresh(profile, card["jubeat_id"], game_version):
                 # a new day: keep the new challenge so gameend can update the same songs
                 card["version"][str(game_version)] = profile
                 get_db().table("jubeat_profile").upsert(card, where("card") == refid)
-            response = format_profile(card["jubeat_id"], profile, self.lightchat_maps)
+            response = format_profile(self, game_version, card["jubeat_id"], profile)
 
         response_body, response_headers = await core_prepare_response(request, response)
         return Response(content=response_body, headers=response_headers)
@@ -1637,7 +1674,7 @@ class JubeatGame:
         mdata_ver_node = player.find("mdata_ver")
         mdata_ver = int(mdata_ver_node.text) if mdata_ver_node is not None and mdata_ver_node.text else 1
 
-        response = format_scores(jid, game_version, mdata_ver)
+        response = format_scores(self, jid, game_version, mdata_ver)
 
         response_body, response_headers = await core_prepare_response(request, response)
         return Response(content=response_body, headers=response_headers)
@@ -1646,7 +1683,7 @@ class JubeatGame:
         request_info = await core_process_request(request)
 
         response = E.response(
-            E.gametop_ave2(
+            self.module("gametop",
                 E.data(
                     E.meeting(
                         E.single(count=0),
@@ -1678,12 +1715,13 @@ class JubeatGame:
             card = get_profile(refid)
             jid = card.get("jubeat_id", _int(player, "jid"))
             update_profile_from_regist(profile, info, player)
+            self.save_player_nodes(profile, player)
             save_scores(jid, game_version, result, profile)
             update_fc_challenge(profile, result, player)
             _save_profile(refid, game_version, profile)
 
         response = E.response(
-            E.gameend_ave2(
+            self.module("gameend",
                 E.data(
                     E.player(
                         E.session_id(1, __type="s32"),
@@ -1711,7 +1749,7 @@ class JubeatGame:
             _save_profile(refid, game_version, profile)
 
         response = E.response(
-            E.gameend_ave2(),
+            self.module("gameend"),
         )
 
         response_body, response_headers = await core_prepare_response(request, response)
@@ -1736,7 +1774,7 @@ class JubeatGame:
 
         picks = recommend(request_info["game_version"], jid, played)
         response = E.response(
-            E.recommend_ave2(
+            self.module("recommend",
                 E.data(
                     E.player(
                         E.music_list(
@@ -1761,7 +1799,7 @@ class JubeatGame:
         request_info = await core_process_request(request)
 
         response = E.response(
-            E.demodata_ave2(
+            self.module("demodata",
                 E.data(
                     E.info(
                         E.black_jacket_list([0] * 64, __type="s32"),
@@ -1777,7 +1815,7 @@ class JubeatGame:
         request_info = await core_process_request(request)
 
         response = E.response(
-            E.demodata_ave2(
+            self.module("demodata",
                 E.selection_list(),
             )
         )
@@ -1789,7 +1827,7 @@ class JubeatGame:
         request_info = await core_process_request(request)
 
         response = E.response(
-            E.demodata_ave2(
+            self.module("demodata",
                 E.data(
                     E.officialnews(count=0),
                 )
@@ -1804,7 +1842,7 @@ class JubeatGame:
 
         charts = hitchart(request_info["game_version"])
         response = E.response(
-            E.demodata_ave2(
+            self.module("demodata",
                 E.data(
                     E.update(time.strftime("%Y/%m/%d %H:%M"), __type="str"),
                     _hitchart_node("hitchart_lic", charts["licensed"]),
@@ -1819,7 +1857,7 @@ class JubeatGame:
     async def lobby_check(self, request):
         request_info = await core_process_request(request)
 
-        response = lobby_check(_pcbid(request_info), request_info["game_version"])
+        response = E.response(self.module("lobby", lobby_check(_pcbid(request_info), request_info["game_version"])))
 
         response_body, response_headers = await core_prepare_response(request, response)
         return Response(content=response_body, headers=response_headers)
@@ -1828,7 +1866,7 @@ class JubeatGame:
         request_info = await core_process_request(request)
 
         data = request_info["root"][0].find("data")
-        response = lobby_entry(_pcbid(request_info), request_info["game_version"], data)
+        response = E.response(self.module("lobby", lobby_entry(_pcbid(request_info), request_info["game_version"], data)))
 
         response_body, response_headers = await core_prepare_response(request, response)
         return Response(content=response_body, headers=response_headers)
@@ -1837,7 +1875,7 @@ class JubeatGame:
         request_info = await core_process_request(request)
 
         data = request_info["root"][0].find("data")
-        response = lobby_refresh(_pcbid(request_info), data)
+        response = E.response(self.module("lobby", lobby_refresh(_pcbid(request_info), data)))
 
         response_body, response_headers = await core_prepare_response(request, response)
         return Response(content=response_body, headers=response_headers)
@@ -1846,7 +1884,7 @@ class JubeatGame:
         request_info = await core_process_request(request)
 
         data = request_info["root"][0].find("data")
-        response = lobby_report(_pcbid(request_info), data)
+        response = E.response(self.module("lobby", lobby_report(_pcbid(request_info), data)))
 
         response_body, response_headers = await core_prepare_response(request, response)
         return Response(content=response_body, headers=response_headers)
@@ -1865,7 +1903,7 @@ class JubeatGame:
         information = (data.findtext("information") if data is not None else "") or ""
         print(f"{time.strftime('%H:%M:%S')} jubeat logger_ave2.report from {root.attrib.get('srcid', '?')}: code={code!r} information={information!r}")
 
-        response = E.response(E.logger_ave2())
+        response = E.response(self.module("logger"))
 
         response_body, response_headers = await core_prepare_response(request, response)
         return Response(content=response_body, headers=response_headers)
@@ -1890,7 +1928,7 @@ class JubeatGame:
         request_info = await core_process_request(request)
 
         response = E.response(
-            E.jbox_ave2(
+            self.module("jbox",
                 E.selection_list(),
             )
         )
@@ -1903,10 +1941,38 @@ class JubeatGame:
         request_info = await core_process_request(request)
 
         response = E.response(
-            E.jbox_ave2(
+            self.module("jbox",
                 E.is_agreement(True, __type="bool"),
             )
         )
+
+        response_body, response_headers = await core_prepare_response(request, response)
+        return Response(content=response_body, headers=response_headers)
+
+    # lab.get_ranking (festo's jubeat lab, player made charts; service "slocal"; jubeat.dll 2022-05-24 sender sub_10158B40 /
+    # receiver sub_10158BA0): req: retry(s32) category(s8)   res: category(s8) entries(@count, up to 10)/entry/seq_id(str)
+    # There are no lab charts here, so the ranking is empty; the other lab methods (get_fumen, set_music_result) get a 404.
+    async def lab_get_ranking(self, request):
+        request_info = await core_process_request(request)
+
+        response = E.response(
+            self.module(
+                "lab",
+                E.category(_int(request_info["root"][0], "category"), __type="s8"),
+                E.entries(count="0"),
+            )
+        )
+
+        response_body, response_headers = await core_prepare_response(request, response)
+        return Response(content=response_body, headers=response_headers)
+
+    # ins.netlog (service "netlog"): avs2-ea3's netlog appender posts log lines here when ea3-config switches it on
+    # (netlog_appender_boot); nothing of the answer is read. Offered so that the service exists: bemaniutils found festo
+    # dying at coin-in without it.
+    async def ins_netlog(self, request):
+        request_info = await core_process_request(request)
+
+        response = E.response(E.ins())
 
         response_body, response_headers = await core_prepare_response(request, response)
         return Response(content=response_body, headers=response_headers)

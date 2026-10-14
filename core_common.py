@@ -1,6 +1,13 @@
 import config
 
+import sys
 import time
+
+# Printing a request or an answer (config.verbose_log) must not fail the request: festo's course names carry
+# katakana a cp949 console cannot show, which otherwise ends the request with UnicodeEncodeError.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(errors="replace")
 
 from lxml.builder import ElementMaker
 
@@ -140,6 +147,8 @@ async def core_get_game_version_from_software_version(software_version):
     elif model == "L44":
         if ext >= 2023092001:
             return 12
+        elif 2018090500 <= ext < 2022080300:  # festo (2018-09-05 .. 2022-05-24); Ave (2022-08-03 ..) is not served
+            return 10
 
     elif model == "M39":
         # pcb24/info24/player24 protocol (pop'n 24 Usaneko era modules)

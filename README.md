@@ -16,6 +16,7 @@ Run [start.bat (Windows)](start.bat) or [start.sh (Linux, MacOS)](start.sh)
 - Nostalgia Op.3
 - SOUND VOLTEX EXCEED GEAR
 - pop'n music Jam & Fizz
+- jubeat festo
 - jubeat beyond the Ave.
 
 **Note**: Playable means settings/scores *should* save and load. Events are not implemented.

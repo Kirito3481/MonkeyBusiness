@@ -1525,8 +1525,15 @@ def lobby_report(pcbid, data):
     )
 
 
-def _pcbid(request_info):
-    return request_info["root"].attrib.get("srcid", "")
+def _pcbid(request_info, request=None):
+    """What tells the cabinets of the lobby apart: the srcid of the request (the PCBID). Cabinets left on the
+    ea3-config default PCBID (0100...0) all send the same one, and then the second cabinet's entry looked like the
+    first one's re-entry: both were made master of one room and never connected (festo local matching,
+    2026-10-14). Such an id gets the cabinet's address appended, which is stable for the few minutes a room lives."""
+    srcid = request_info["root"].attrib.get("srcid", "")
+    if srcid.strip("0") in ("", "1") and request is not None and request.client is not None:
+        return f"{srcid}@{request.client.host}"
+    return srcid
 
 
 # ====================================================================================================
@@ -1857,7 +1864,7 @@ class JubeatGame:
     async def lobby_check(self, request):
         request_info = await core_process_request(request)
 
-        response = E.response(self.module("lobby", lobby_check(_pcbid(request_info), request_info["game_version"])))
+        response = E.response(self.module("lobby", lobby_check(_pcbid(request_info, request), request_info["game_version"])))
 
         response_body, response_headers = await core_prepare_response(request, response)
         return Response(content=response_body, headers=response_headers)
@@ -1866,7 +1873,7 @@ class JubeatGame:
         request_info = await core_process_request(request)
 
         data = request_info["root"][0].find("data")
-        response = E.response(self.module("lobby", lobby_entry(_pcbid(request_info), request_info["game_version"], data)))
+        response = E.response(self.module("lobby", lobby_entry(_pcbid(request_info, request), request_info["game_version"], data)))
 
         response_body, response_headers = await core_prepare_response(request, response)
         return Response(content=response_body, headers=response_headers)
@@ -1875,7 +1882,7 @@ class JubeatGame:
         request_info = await core_process_request(request)
 
         data = request_info["root"][0].find("data")
-        response = E.response(self.module("lobby", lobby_refresh(_pcbid(request_info), data)))
+        response = E.response(self.module("lobby", lobby_refresh(_pcbid(request_info, request), data)))
 
         response_body, response_headers = await core_prepare_response(request, response)
         return Response(content=response_body, headers=response_headers)
@@ -1884,7 +1891,7 @@ class JubeatGame:
         request_info = await core_process_request(request)
 
         data = request_info["root"][0].find("data")
-        response = E.response(self.module("lobby", lobby_report(_pcbid(request_info), data)))
+        response = E.response(self.module("lobby", lobby_report(_pcbid(request_info, request), data)))
 
         response_body, response_headers = await core_prepare_response(request, response)
         return Response(content=response_body, headers=response_headers)

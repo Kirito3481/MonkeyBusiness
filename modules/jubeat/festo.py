@@ -19,7 +19,7 @@ import os
 from fastapi import APIRouter, Request
 
 from core_common import E
-from modules.jubeat.base import JubeatGame, _int, _weekly_music_node
+from modules.jubeat.base import JubeatGame, _int, _weekly_music_node, music_db
 
 # jubeat.dll registers every module but lobby (service "lobby") and lab (service "slocal") on the service "local"
 router = APIRouter(prefix="/local", tags=["local"])
@@ -30,8 +30,30 @@ router.model_whitelist = ["L44"]
 EVENTS = {5: False, 6: False, 15: True, 22: False, 23: False, 33: False, 101: False, 102: False, 103: False, 104: False, 105: False, 106: False, 107: False, 108: False, 109: False}
 EVENT_STATUS_OPEN = 0x1  # the player's event state: 0x1 open, 0x2 completed
 
-# jubility pickup songs (64 x s32 bit flags over music_info pos_index), the list bemaniutils' festo has
-HOT_MUSIC_LIST = [0] * 37 + [-4194304, -2080769, -1, -17, -3, -33554433, -242, -268435473, 1073741823, -1073748992, 15] + [0] * 16
+# jubility pickup songs: hot_music_list is 64 x s32 bit flags over music_info pos_index and the game rates the songs in
+# it as "pick up" jubility, all others as "common". On the real network these are festo's own songs, so the list is
+# built from data/10/music_db.json: every song that debuted in festo (version bit 14, music ids 90xxxxxx), by its
+# pos_index. pos_index is numbered per data set - the Ultimix music_ulti.xml renumbers nearly every song - so the json
+# has to be made from the music_info.xml the cabinets run (jubeat_l44_music_db.py takes the xml directly). A json
+# without pos_index (an older file) falls back to bemaniutils' list, which fits the stock 2022-05-24 data only.
+FESTO_DEBUT_VERSION = 14
+HOT_MUSIC_LIST_STOCK = [0] * 37 + [-4194304, -2080769, -1, -17, -3, -33554433, -242, -268435473, 1073741823, -1073748992, 15] + [0] * 16
+_hot_music_cache = {}
+
+
+def hot_music_list(game_version):
+    """The 64 s32 of hot_music_list for the songs of data/<game version>/music_db.json."""
+    cached = _hot_music_cache.get(game_version)
+    if cached is None:
+        bits, with_pos_index = [0] * 64, False
+        for song in music_db(game_version).values():
+            if len(song) > 5 and song[5] is not None:
+                with_pos_index = True
+                if song[0] == FESTO_DEBUT_VERSION and 0 <= song[5] < 64 * 32:
+                    bits[song[5] // 32] |= 1 << (song[5] % 32)
+        cached = [bit - (1 << 32) if bit >= (1 << 31) else bit for bit in bits] if with_pos_index else HOT_MUSIC_LIST_STOCK
+        _hot_music_cache[game_version] = cached
+    return cached
 
 # TUNE RUN courses: data/10/courses.json, the 52 courses of the 2022-05-24 data as bemaniutils' festo lists them
 # ({id, name, course_type 1 permanent / 2 time based, clear_type 1 score per tune / 2 combined score / 3 hazard,
@@ -115,7 +137,7 @@ class JubeatFestoGame(JubeatGame):
             E.white_theme_list([-1] * 16, __type="s32"),
             E.open_music_list([0] * 64, __type="s32"),
             E.shareable_music_list([0] * 64, __type="s32"),
-            E.hot_music_list(HOT_MUSIC_LIST, __type="s32"),
+            E.hot_music_list(hot_music_list(game_version), __type="s32"),
             E.jbox(
                 E.point(0, __type="s32"),
                 E.emblem(E.normal(E.index(2, __type="s16")), E.premium(E.index(1, __type="s16"))),
